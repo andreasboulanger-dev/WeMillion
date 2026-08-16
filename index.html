@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Globe Map</title>
+
+  <link href="https://unpkg.com/maplibre-gl@5.1.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Sits behind #map; JS shifts/rotates its background to track the
+       globe's rotation, so the sky appears to move as you spin the earth. -->
+  <div id="stars"></div>
+
+  <div id="map"></div>
+
+  <!-- Giant animated counter, counts up to 1,000,000 on load -->
+  <div id="beer-counter" aria-hidden="true">
+    <span id="beer-counter-value">0</span>
+    <span class="beer-counter-label">beers logged worldwide</span>
+  </div>
+
+  <!-- CTA: triggers the camera below. capture="environment" opens the
+       rear camera directly on mobile; falls back to a plain file picker
+       on desktop. -->
+  <button id="add-beer-btn" type="button">
+    <span class="add-beer-btn-icon" aria-hidden="true">🍺</span>
+    Add my beer
+  </button>
+  <input
+    id="beer-photo-input"
+    type="file"
+    accept="image/*"
+    capture="environment"
+    hidden
+  />
+
+  <!-- Photo confirm step: shown immediately after a snap is taken, before
+       the details drawer opens. -->
+  <div id="photo-confirm-backdrop" hidden></div>
+  <div id="photo-confirm" role="dialog" aria-modal="true" aria-labelledby="photo-confirm-title" hidden>
+    <img id="photo-confirm-img" alt="Photo you just took" />
+    <p id="photo-confirm-title">Is this photo good?</p>
+    <div class="photo-confirm-actions">
+      <button id="photo-retake-btn" type="button" class="photo-confirm-btn photo-confirm-btn-secondary">Retake</button>
+      <button id="photo-use-btn" type="button" class="photo-confirm-btn photo-confirm-btn-primary">Use photo</button>
+    </div>
+  </div>
+
+  <!-- Bottom sheet: everything here is optional. -->
+  <div id="sheet-backdrop" hidden></div>
+  <div id="beer-sheet" role="dialog" aria-modal="true" aria-labelledby="beer-sheet-title" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+
+    <div class="sheet-header">
+      <h2 id="beer-sheet-title">Add my beer</h2>
+      <button id="sheet-close-btn" type="button" aria-label="Close">✕</button>
+    </div>
+
+    <form id="beer-form">
+      <img id="beer-photo-thumb" alt="Your beer photo" hidden />
+
+      <div class="field-group">
+        <span class="field-label" id="nearby-label">Nearby <span id="nearby-optional-tag" class="field-optional">(optional)</span></span>
+        <div id="bar-chip-row" class="chip-row" role="radiogroup" aria-labelledby="nearby-label"></div>
+        <div id="bar-search" class="inline-search" hidden>
+          <input id="bar-search-input" type="text" placeholder="Search bars, restaurants, pubs, clubs…" autocomplete="off" />
+          <ul id="bar-search-results" class="search-results"></ul>
+        </div>
+        <p id="bar-required-hint" class="field-hint" hidden></p>
+      </div>
+
+      <div class="field-group">
+        <span class="field-label" id="beer-label">Beer <span class="field-optional">(optional)</span></span>
+        <div id="beer-chip-row" class="chip-row" role="radiogroup" aria-labelledby="beer-label"></div>
+        <div id="beer-search" class="inline-search" hidden>
+          <input id="beer-search-input" type="text" placeholder="Search or type a beer name…" autocomplete="off" />
+          <ul id="beer-search-results" class="search-results"></ul>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <span class="field-label" id="price-label">Price <span class="field-optional">(optional)</span></span>
+        <div id="price-wheel" class="price-wheel">
+          <div id="price-carousel" class="price-wheel-track" role="radiogroup" aria-labelledby="price-label"></div>
+          <div class="price-wheel-indicator" aria-hidden="true"></div>
+          <div class="price-wheel-fade price-wheel-fade-left" aria-hidden="true"></div>
+          <div class="price-wheel-fade price-wheel-fade-right" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <span class="field-label" id="rating-label">Rating <span class="field-optional">(optional)</span></span>
+      <div class="star-rating" role="radiogroup" aria-labelledby="rating-label">
+        <button type="button" class="star" data-value="1" role="radio" aria-checked="false" aria-label="1 star">★</button>
+        <button type="button" class="star" data-value="2" role="radio" aria-checked="false" aria-label="2 stars">★</button>
+        <button type="button" class="star" data-value="3" role="radio" aria-checked="false" aria-label="3 stars">★</button>
+        <button type="button" class="star" data-value="4" role="radio" aria-checked="false" aria-label="4 stars">★</button>
+        <button type="button" class="star" data-value="5" role="radio" aria-checked="false" aria-label="5 stars">★</button>
+      </div>
+
+      <button id="save-beer-btn" type="submit">Save</button>
+    </form>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@5.1.1/dist/maplibre-gl.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
