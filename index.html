@@ -7,6 +7,7 @@
 
   <link href="https://unpkg.com/maplibre-gl@5.1.1/dist/maplibre-gl.css" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
   <!-- Sits behind #map; JS shifts/rotates its background to track the
@@ -15,10 +16,45 @@
 
   <div id="map"></div>
 
-  <!-- Giant animated counter, counts up to 1,000,000 on load -->
-  <div id="beer-counter" aria-hidden="true">
-    <span id="beer-counter-value">0</span>
+  <!-- Menu: top-right icon opens a small on-the-spot popover list
+       underneath itself (not a full bottom sheet). Always shows a
+       home glyph, since the globe view it sits on top of is the app's
+       home/base screen — iOS Sports-app-style menu. -->
+  <div id="menu-panel" class="menu-panel">
+    <button id="menu-btn" class="menu-icon-btn" type="button" aria-label="Menu" aria-haspopup="menu" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 11.5 12 4l9 7.5"></path>
+        <path d="M5.5 10v8.5a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V10"></path>
+        <path d="M9.5 19.5V14a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v5.5"></path>
+      </svg>
+    </button>
+
+    <div id="menu-panel-list" class="menu-panel-list" role="menu" aria-labelledby="menu-btn" hidden>
+      <button type="button" class="menu-popover-item" id="menu-item-profile" role="menuitem">
+        <span id="menu-profile-avatar-emoji" class="menu-popover-icon menu-popover-avatar" aria-hidden="true">🍺</span>
+        <span>Profil</span>
+      </button>
+      <button type="button" class="menu-popover-item" id="menu-item-settings" role="menuitem">
+        <svg class="menu-popover-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        <span>Paramètre</span>
+      </button>
+      <button type="button" class="menu-popover-item menu-popover-item-text-only" id="menu-item-battlefield" role="menuitem">
+        <span>Battlefield</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Giant animated counter, counts up to 1,000,000 on load. The
+       number itself is the only interactive part (opens the stats
+       sheet) — the rest of the block stays click-through so it never
+       blocks dragging the globe. -->
+  <div id="beer-counter">
+    <button id="beer-counter-value" type="button" aria-label="View worldwide stats">0</button>
     <span class="beer-counter-label">beers logged worldwide</span>
+    <span id="beer-counter-remaining" aria-hidden="true"></span>
   </div>
 
   <!-- CTA: triggers the camera below. capture="environment" opens the
@@ -36,21 +72,9 @@
     hidden
   />
 
-  <!-- Photo confirm step: shown immediately after a snap is taken, before
-       the details drawer opens. -->
-  <div id="photo-confirm-backdrop" hidden></div>
-  <div id="photo-confirm" role="dialog" aria-modal="true" aria-labelledby="photo-confirm-title" hidden>
-    <img id="photo-confirm-img" alt="Photo you just took" />
-    <p id="photo-confirm-title">Is this photo good?</p>
-    <div class="photo-confirm-actions">
-      <button id="photo-retake-btn" type="button" class="photo-confirm-btn photo-confirm-btn-secondary">Retake</button>
-      <button id="photo-use-btn" type="button" class="photo-confirm-btn photo-confirm-btn-primary">Use photo</button>
-    </div>
-  </div>
-
   <!-- Bottom sheet: everything here is optional. -->
-  <div id="sheet-backdrop" hidden></div>
-  <div id="beer-sheet" role="dialog" aria-modal="true" aria-labelledby="beer-sheet-title" hidden>
+  <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+  <div id="beer-sheet" class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="beer-sheet-title" hidden>
     <div class="sheet-handle" aria-hidden="true"></div>
 
     <div class="sheet-header">
@@ -101,6 +125,77 @@
 
       <button id="save-beer-btn" type="submit">Save</button>
     </form>
+  </div>
+
+  <!-- Profile drawer: opened from the top-right profile button. -->
+  <div id="profile-sheet-backdrop" class="sheet-backdrop" hidden></div>
+  <div id="profile-sheet" class="bottom-sheet bottom-sheet-full" role="dialog" aria-modal="true" aria-labelledby="profile-sheet-title" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+
+    <div class="sheet-header">
+      <h2 id="profile-sheet-title">Profile</h2>
+      <button id="profile-close-btn" type="button" aria-label="Close">✕</button>
+    </div>
+
+    <div id="profile-avatar-row">
+      <button id="profile-avatar-btn" type="button" aria-label="Change avatar" aria-haspopup="true">
+        <span id="profile-avatar-emoji">🍺</span>
+      </button>
+      <div class="field-group" id="profile-username-group">
+        <label class="field-label" for="profile-username-input">Name</label>
+        <input id="profile-username-input" type="text" maxlength="40" autocomplete="off" placeholder="Beer Explorer" />
+      </div>
+    </div>
+
+    <div id="profile-avatar-picker" class="chip-row" role="radiogroup" aria-label="Choose an avatar" hidden></div>
+
+    <div id="profile-stats">
+      <div class="profile-stat">
+        <span id="profile-stat-count" class="profile-stat-value">–</span>
+        <span class="profile-stat-label">Beers logged</span>
+      </div>
+      <div class="profile-stat">
+        <span id="profile-stat-since" class="profile-stat-value">–</span>
+        <span class="profile-stat-label">Member since</span>
+      </div>
+    </div>
+
+    <p id="profile-favorite" class="field-hint" hidden></p>
+    <p id="profile-status" class="field-hint" hidden></p>
+  </div>
+
+  <!-- Stats drawer: opened by tapping the giant counter. -->
+  <div id="stats-sheet-backdrop" class="sheet-backdrop" hidden></div>
+  <div id="stats-sheet" class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="stats-sheet-title" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+
+    <div class="sheet-header">
+      <h2 id="stats-sheet-title">Worldwide stats</h2>
+      <button id="stats-close-btn" type="button" aria-label="Close">✕</button>
+    </div>
+
+    <div id="stats-grid">
+      <div class="profile-stat">
+        <span id="stats-total-value" class="profile-stat-value">–</span>
+        <span class="profile-stat-label">Beers logged</span>
+      </div>
+      <div class="profile-stat">
+        <span id="stats-today-value" class="profile-stat-value">–</span>
+        <span class="profile-stat-label">Last 24h</span>
+      </div>
+      <div class="profile-stat">
+        <span id="stats-rating-value" class="profile-stat-value">–</span>
+        <span class="profile-stat-label">Avg rating</span>
+      </div>
+      <div class="profile-stat">
+        <span id="stats-price-value" class="profile-stat-value">–</span>
+        <span class="profile-stat-label">Avg price</span>
+      </div>
+    </div>
+
+    <p id="stats-top-beer" class="field-hint" hidden></p>
+    <p id="stats-top-bar" class="field-hint" hidden></p>
+    <p id="stats-status" class="field-hint" hidden></p>
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@5.1.1/dist/maplibre-gl.js"></script>

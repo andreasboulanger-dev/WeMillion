@@ -1,3 +1,6 @@
+(function () {
+"use strict";
+
 const HOME_VIEW = {
   center: [0, 0],
   // Low enough to fit the entire globe in view, but pulled in a bit
@@ -31,6 +34,7 @@ const COUNTER_LOAD_DURATION_MS = 1200;
 const COUNTER_INCREMENT_DURATION_MS = 400;
 
 const beerCounterEl = document.getElementById("beer-counter-value");
+const beerCounterRemainingEl = document.getElementById("beer-counter-remaining");
 
 function getBeerCount() {
   const stored = parseInt(localStorage.getItem(COUNTER_STORAGE_KEY), 10);
@@ -41,6 +45,15 @@ function setBeerCount(value) {
   const clamped = Math.min(Math.max(0, value), COUNTER_MAX);
   localStorage.setItem(COUNTER_STORAGE_KEY, String(clamped));
   return clamped;
+}
+
+// "N beers to go" — kept in sync with the big number itself, including
+// while it's mid-animation, so the two count together.
+function renderRemaining(value) {
+  if (!beerCounterRemainingEl) return;
+  const remaining = Math.max(0, COUNTER_MAX - value);
+  const noun = remaining === 1 ? "beer" : "beers";
+  beerCounterRemainingEl.textContent = `${remaining.toLocaleString("en-US")} ${noun} to go`;
 }
 
 // Ease-out so counts settle gently onto the final number instead of a
@@ -54,6 +67,7 @@ function animateBeerCounter(from, to, durationMs) {
     const t = Math.min(1, (now - start) / durationMs);
     const value = Math.round(from + (to - from) * easeOutExpo(t));
     beerCounterEl.textContent = value.toLocaleString("en-US");
+    renderRemaining(value);
     if (t < 1) requestAnimationFrame(tick);
   }
 
@@ -71,6 +85,94 @@ function incrementBeerCounter() {
     animateBeerCounter(before, after, COUNTER_INCREMENT_DURATION_MS);
   }
 }
+
+/* ---------------------------------------------------------------- *
+ *  "N beers to go": visible right away in its resting spot under the
+ *  label, then quietly fades away a few seconds after load.
+ * ---------------------------------------------------------------- */
+
+const REMAINING_FADE_DELAY_MS = 5000;
+
+setTimeout(() => {
+  if (beerCounterRemainingEl) beerCounterRemainingEl.classList.add("is-hidden");
+}, REMAINING_FADE_DELAY_MS);
+
+/* ---------------------------------------------------------------- *
+ *  Supabase: gives every visitor a persistent (anonymous) identity,
+ *  a profile row, and a shared, server-side beer log so entries and
+ *  the "worldwide" counter are real across users/devices instead of
+ *  just this browser's localStorage.
+ * ---------------------------------------------------------------- */
+
+const SUPABASE_URL = "https://zugfkgjcynebefivwwqx.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp1Z2ZrZ2pjeW5lYmVmaXZ3d3F4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4NjM4MDAsImV4cCI6MjEwMjQzOTgwMH0.qX5HVyCjmZJpsj0WWFhcuYq5IUThl8A89eIMwVdHZw8";
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentUser = null;
+let currentProfile = null; // { id, username, avatar_emoji, created_at }
+
+// Sign the visitor in anonymously (or restore their existing anonymous
+// session), make sure a profiles row exists (handled server-side by a
+// trigger on auth.users), then load it and true up the beer counter
+// against the real server-side total.
+async function initSupabaseUser() {
+  try {
+    const {
+      data: { session },
+    } = await supabaseClient.auth.getSession();
+    currentUser = session && session.user ? session.user : null;
+
+    if (!currentUser) {
+      const { data, error } = await supabaseClient.auth.signInAnonymously();
+      if (error) throw error;
+      currentUser = data.user;
+    }
+
+    await loadProfile();
+  } catch (err) {
+    // Most likely cause: Anonymous Sign-Ins isn't enabled for this
+    // Supabase project yet (Authentication -> Providers -> Anonymous).
+    console.error("Supabase sign-in failed — profile and shared beer log are unavailable:", err);
+  }
+
+  refreshBeerCounterFromServer();
+}
+
+async function loadProfile() {
+  if (!currentUser) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from("profiles")
+      .select("id, username, avatar_emoji, created_at")
+      .eq("id", currentUser.id)
+      .single();
+    if (error) throw error;
+    currentProfile = data;
+    renderProfile();
+  } catch (err) {
+    console.error("Failed to load profile:", err);
+  }
+}
+
+// Corrects the (locally-animated) counter to the real worldwide total
+// once the server responds, and updates the local cache it's animated
+// from so future increments stay in sync.
+async function refreshBeerCounterFromServer() {
+  try {
+    const { count, error } = await supabaseClient.from("beer_entries").select("*", { count: "exact", head: true });
+    if (error) throw error;
+    if (typeof count === "number") {
+      const before = getBeerCount();
+      const after = setBeerCount(count);
+      animateBeerCounter(before, after, COUNTER_LOAD_DURATION_MS);
+    }
+  } catch (err) {
+    console.error("Failed to load worldwide beer count:", err);
+  }
+}
+
+initSupabaseUser();
 
 const map = new maplibregl.Map({
   container: "map",
@@ -282,14 +384,30 @@ function createBeerLightMarker(lat, lng) {
   return { lat, lng, el, fade, marker };
 }
 
-// Renders every beer this user has already logged, from localStorage.
-function initBeerLights() {
-  beerLights = getStoredBeerLightLocations().map(({ lat, lng }) => createBeerLightMarker(lat, lng));
+// Renders every beer logged so far, worldwide (public read on
+// beer_entries) — falling back to this device's own localStorage
+// cache if the server is unreachable.
+async function initBeerLights() {
+  let locations = [];
+  try {
+    const { data, error } = await supabaseClient
+      .from("beer_entries")
+      .select("bar_lat, bar_lng")
+      .not("bar_lat", "is", null)
+      .not("bar_lng", "is", null);
+    if (error) throw error;
+    locations = (data || []).map((row) => ({ lat: row.bar_lat, lng: row.bar_lng }));
+  } catch (err) {
+    console.error("Failed to load shared beer lights, falling back to local cache:", err);
+    locations = getStoredBeerLightLocations();
+  }
+
+  beerLights = locations.map(({ lat, lng }) => createBeerLightMarker(lat, lng));
   updateBeerLightFade();
 }
 
-// Called right after a beer is saved: persists the spot and drops a
-// new light there immediately.
+// Called right after a beer is saved: drops a new light immediately
+// and keeps a local cache as an offline fallback for initBeerLights.
 function addBeerLight(lat, lng) {
   const stored = getStoredBeerLightLocations();
   stored.push({ lat, lng });
@@ -314,17 +432,12 @@ function updateBeerLightFade() {
 }
 
 /* ---------------------------------------------------------------- *
- *  "Add my beer" flow: camera -> confirm -> drawer (nearby bar,
- *  beer, price, rating — every field optional).
+ *  "Add my beer" flow: camera -> drawer (nearby bar, beer, price,
+ *  rating — every field optional).
  * ---------------------------------------------------------------- */
 
 const addBeerBtn = document.getElementById("add-beer-btn");
 const beerPhotoInput = document.getElementById("beer-photo-input");
-const photoConfirmBackdrop = document.getElementById("photo-confirm-backdrop");
-const photoConfirm = document.getElementById("photo-confirm");
-const photoConfirmImg = document.getElementById("photo-confirm-img");
-const photoRetakeBtn = document.getElementById("photo-retake-btn");
-const photoUseBtn = document.getElementById("photo-use-btn");
 
 const sheetBackdrop = document.getElementById("sheet-backdrop");
 const beerSheet = document.getElementById("beer-sheet");
@@ -354,12 +467,14 @@ let capturedPhotoDataUrl = null;
 
 /* ---------------------------------------------------------------- *
  *  Step 1: tapping the CTA opens the camera directly (via a hidden
- *  file input with capture="environment") instead of the drawer.
+ *  file input with capture="environment"). Once a photo comes back,
+ *  it's kept and the drawer opens straight away — no separate
+ *  "is this photo good?" confirmation step.
  * ---------------------------------------------------------------- */
 
 addBeerBtn.addEventListener("click", () => {
-  // Reset the input first so choosing/retaking the "same" photo twice
-  // in a row still fires a change event.
+  // Reset the input first so choosing the "same" photo twice in a
+  // row still fires a change event.
   beerPhotoInput.value = "";
   beerPhotoInput.click();
 });
@@ -370,65 +485,14 @@ beerPhotoInput.addEventListener("change", () => {
 
   const reader = new FileReader();
   reader.onload = () => {
-    photoConfirmImg.src = reader.result;
-    openPhotoConfirm();
+    capturedPhotoDataUrl = reader.result;
+    openBeerSheet();
   };
   reader.readAsDataURL(file);
 });
 
 /* ---------------------------------------------------------------- *
- *  Step 2: "Is this photo good?" confirm screen.
- * ---------------------------------------------------------------- */
-
-function openPhotoConfirm() {
-  photoConfirmBackdrop.hidden = false;
-  photoConfirm.hidden = false;
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      photoConfirmBackdrop.classList.add("is-open");
-      photoConfirm.classList.add("is-open");
-    });
-  });
-}
-
-function closePhotoConfirm() {
-  photoConfirmBackdrop.classList.remove("is-open");
-  photoConfirm.classList.remove("is-open");
-  const onTransitionEnd = () => {
-    photoConfirmBackdrop.hidden = true;
-    photoConfirm.hidden = true;
-    photoConfirm.removeEventListener("transitionend", onTransitionEnd);
-  };
-  photoConfirm.addEventListener("transitionend", onTransitionEnd);
-}
-
-photoRetakeBtn.addEventListener("click", () => {
-  closePhotoConfirm();
-  // Give the confirm card's close transition a beat before relaunching
-  // the camera so the two overlays don't visibly overlap.
-  setTimeout(() => {
-    beerPhotoInput.value = "";
-    beerPhotoInput.click();
-  }, 300);
-});
-
-// Tapping outside the confirm card cancels the whole flow (no photo
-// kept, drawer never opens) rather than silently accepting it.
-photoConfirmBackdrop.addEventListener("click", () => {
-  capturedPhotoDataUrl = null;
-  closePhotoConfirm();
-});
-
-photoUseBtn.addEventListener("click", () => {
-  capturedPhotoDataUrl = photoConfirmImg.src;
-  closePhotoConfirm();
-  // Same beat as retake, so the drawer's slide-up isn't fighting the
-  // confirm card's fade-out.
-  setTimeout(openBeerSheet, 300);
-});
-
-/* ---------------------------------------------------------------- *
- *  Step 3: the drawer itself.
+ *  Step 2: the drawer itself.
  * ---------------------------------------------------------------- */
 
 function openBeerSheet() {
@@ -498,17 +562,16 @@ function createChip(label, isSelected) {
 
 /* ---------------------------------------------------------------- *
  *  Nearby: with location access, the closest 2 bars/pubs (Overpass,
- *  narrow radius) show as chips, plus "Other…" for a wider search
+ *  narrow radius) show as chips, plus "Other…" for a live text search
  *  that also covers restaurants and clubs. Without location access,
- *  a bar/pub is required, and the search box (live text search
- *  against OpenStreetMap by name) is shown directly instead of chips.
+ *  a bar/pub is required, and the same search box is shown directly
+ *  instead of chips.
  * ---------------------------------------------------------------- */
 
 let userLat = null;
 let userLng = null;
 let locationStatus = "pending"; // "pending" | "granted" | "denied"
 let nearbyBars = []; // [{ name, lat, lon }], closest bar/pub only
-let barCandidates = null; // wider bar/pub/restaurant/club list, fetched lazily
 let selectedBarName = null;
 let selectedBarIsOther = false;
 let selectedBarLat = null;
@@ -520,7 +583,6 @@ function resetBarState() {
   userLng = null;
   locationStatus = "pending";
   nearbyBars = [];
-  barCandidates = null;
   selectedBarName = null;
   selectedBarIsOther = false;
   selectedBarLat = null;
@@ -623,90 +685,43 @@ function updateBarRequiredHint() {
     : "Location is off — search for your bar or pub to continue.";
 }
 
-async function toggleBarSearch() {
+function toggleBarSearch() {
   const opening = barSearch.hidden;
   barSearch.hidden = !opening;
   if (!opening) return;
 
   barSearchInput.focus();
-  renderBarSearchResults("");
-
-  if (!barCandidates && userLat !== null) {
-    barSearchResults.innerHTML = '<li class="search-hint">Loading nearby places…</li>';
-    try {
-      barCandidates = await fetchNearbyPlaces(userLat, userLng, "^(bar|pub|restaurant|nightclub)$", 1500, 40);
-    } catch (err) {
-      console.error("Nearby place search failed:", err);
-      barCandidates = [];
-    }
-    renderBarSearchResults(barSearchInput.value);
-  }
+  renderBarSearchResults([], barSearchInput.value);
 }
 
 barSearchInput.addEventListener("input", () => {
   const value = barSearchInput.value;
-  if (locationStatus === "denied") {
-    // Every keystroke counts as the entered name, so simply typing
-    // (without picking a suggestion) still satisfies the requirement.
-    selectedBarName = value.trim() || null;
-    selectedBarIsOther = true;
-    selectedBarLat = null;
-    selectedBarLng = null;
-    updateBarRequiredHint();
-    debounceBarTextSearch(value);
-  } else {
-    renderBarSearchResults(value);
-  }
+  // Every keystroke counts as the entered name, so simply typing
+  // (without picking a suggestion) still satisfies the requirement
+  // when location is off, and still counts as "Other…" when it's on.
+  selectedBarName = value.trim() || null;
+  selectedBarIsOther = true;
+  selectedBarLat = null;
+  selectedBarLng = null;
+  if (locationStatus === "denied") updateBarRequiredHint();
+  debounceBarTextSearch(value);
 });
 
-// Location-granted "Other…" search: filters the wider candidate list
-// already fetched for this session — no network call per keystroke.
-function renderBarSearchResults(query) {
-  const q = query.trim().toLowerCase();
-  barSearchResults.innerHTML = "";
-
-  if (barCandidates === null) {
-    barSearchResults.innerHTML = userLat === null
-      ? '<li class="search-hint">Enable location to see nearby places, or just type a name below.</li>'
-      : '<li class="search-hint">Loading nearby places…</li>';
-  }
-
-  if (q) {
-    const useCustom = document.createElement("li");
-    useCustom.className = "search-result search-result-custom";
-    useCustom.textContent = `Use “${query.trim()}”`;
-    useCustom.addEventListener("click", () => selectBar(query.trim(), true));
-    barSearchResults.appendChild(useCustom);
-  }
-
-  const matches = (barCandidates || [])
-    .filter((place) => !q || place.name.toLowerCase().includes(q))
-    .slice(0, 8);
-
-  matches.forEach((place) => {
-    const li = document.createElement("li");
-    li.className = "search-result";
-    li.textContent = place.name;
-    li.addEventListener("click", () => selectBar(place.name, true, place.lat, place.lon));
-    barSearchResults.appendChild(li);
-  });
-}
-
-// Location-denied required search: no coordinates to search around,
-// so this looks places up by name via Nominatim instead, debounced
-// so it's one request per pause in typing, not per keystroke.
+// Live text search (OpenStreetMap/Nominatim), biased toward the
+// user's location when we have one. Debounced so it's one request per
+// pause in typing, not per keystroke.
 function debounceBarTextSearch(query) {
   clearTimeout(barTextSearchTimer);
   const trimmed = query.trim();
   if (trimmed.length < 2) {
-    barSearchResults.innerHTML = "";
+    renderBarSearchResults([], trimmed);
     return;
   }
   barSearchResults.innerHTML = '<li class="search-hint">Searching…</li>';
   barTextSearchTimer = setTimeout(async () => {
     try {
-      const matches = await fetchPlacesByName(trimmed);
-      renderBarTextSearchResults(matches);
+      const matches = await fetchPlacesByName(trimmed, userLat, userLng);
+      renderBarSearchResults(matches, trimmed);
     } catch (err) {
       console.error("Bar name search failed:", err);
       barSearchResults.innerHTML = '<li class="search-hint">Search failed — what you typed will still be used.</li>';
@@ -714,12 +729,26 @@ function debounceBarTextSearch(query) {
   }, 400);
 }
 
-function renderBarTextSearchResults(matches) {
+function renderBarSearchResults(matches, query) {
+  const q = query.trim();
   barSearchResults.innerHTML = "";
+
+  if (q) {
+    const useCustom = document.createElement("li");
+    useCustom.className = "search-result search-result-custom";
+    useCustom.textContent = `Use “${q}”`;
+    useCustom.addEventListener("click", () => selectBar(q, true));
+    barSearchResults.appendChild(useCustom);
+  }
+
   if (matches.length === 0) {
-    barSearchResults.innerHTML = '<li class="search-hint">No matches — what you typed will still be used.</li>';
+    const hint = document.createElement("li");
+    hint.className = "search-hint";
+    hint.textContent = q ? "No matches — what you typed will still be used." : "Search bars, restaurants, pubs, clubs…";
+    barSearchResults.appendChild(hint);
     return;
   }
+
   matches.slice(0, 8).forEach((place) => {
     const li = document.createElement("li");
     li.className = "search-result";
@@ -730,32 +759,52 @@ function renderBarTextSearchResults(matches) {
 }
 
 // Amenity types we treat as "a place you could have a beer" — used to
-// filter both the Nominatim (location-off) and Overpass (location-on)
-// results. Kept a little wider than just bar/pub so a real-world venue
-// (a cafe that also serves beer, a biergarten, a food-hall stall) isn't
-// silently dropped from the dropdown.
+// filter Nominatim results. Kept a little wider than just bar/pub so a
+// real-world venue (a cafe that also serves beer, a biergarten, a
+// food-hall stall) isn't silently dropped from the dropdown.
 const DRINK_VENUE_TYPES = [
   "bar", "pub", "restaurant", "nightclub", "biergarten", "cafe", "food_court", "pub;bar",
 ];
 
-// Free-text place search (no proximity bias, no radius — there's no
-// location to search around), used only when location access was
-// denied. Nominatim, same free OpenStreetMap data as the rest of the
-// app; results are filtered down to bar/pub-like venues.
-async function fetchPlacesByName(query) {
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(query)}&addressdetails=0&namedetails=1&limit=15`;
-  const res = await fetch(url, {
+// Free-text place search, biased toward (lat, lon) when available via
+// a soft (bounded=0) viewbox — soft so a venue just outside the box
+// still comes back rather than being hidden entirely. Nominatim, same
+// free OpenStreetMap data as the rest of the app.
+async function fetchPlacesByName(query, lat = null, lon = null) {
+  const params = new URLSearchParams({
+    format: "jsonv2",
+    q: query,
+    addressdetails: "0",
+    namedetails: "1",
+    limit: "15",
+  });
+  if (lat !== null && lon !== null) {
+    const delta = 0.2; // ~22km box around the user, soft bias only
+    params.set("viewbox", `${lon - delta},${lat + delta},${lon + delta},${lat - delta}`);
+    params.set("bounded", "0");
+  }
+
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
     headers: { Accept: "application/json" },
   });
   if (!res.ok) return [];
   const data = await res.json();
-  return data
-    .filter((r) => DRINK_VENUE_TYPES.includes(r.type))
-    .map((r) => ({
-      name: (r.namedetails && r.namedetails.name) || r.display_name.split(",")[0],
-      lat: Number(r.lat),
-      lon: Number(r.lon),
-    }));
+  if (!Array.isArray(data)) return [];
+
+  const toPlace = (r) => ({
+    name: (r.namedetails && r.namedetails.name) || (r.display_name || "").split(",")[0],
+    lat: Number(r.lat),
+    lon: Number(r.lon),
+  });
+
+  const drinkVenues = data.filter((r) => DRINK_VENUE_TYPES.includes(r.type)).map(toPlace);
+  if (drinkVenues.length > 0) return drinkVenues;
+
+  // Nominatim already ranks by relevance to the typed query — if none
+  // of the results happen to carry one of our expected amenity types
+  // (a lot of real venues don't tag cleanly), showing its raw top
+  // matches beats showing nothing at all.
+  return data.slice(0, 8).map(toPlace);
 }
 
 // A couple of public Overpass mirrors, tried in order — overpass-api.de
@@ -1070,7 +1119,41 @@ document.querySelector(".star-rating").addEventListener("mouseleave", () => {
  *  Save.
  * ---------------------------------------------------------------- */
 
-beerForm.addEventListener("submit", (e) => {
+// data:URL (from FileReader.readAsDataURL) -> Blob, so the photo can
+// be handed to Supabase Storage's upload().
+function dataUrlToBlob(dataUrl) {
+  const [header, base64] = dataUrl.split(",");
+  const mimeMatch = header.match(/data:(.*?);base64/);
+  const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+// Uploads into a folder named after the signed-in user's own id (the
+// storage policies only allow writes under that prefix) and returns
+// its public URL, or null if there's no photo / the upload fails.
+async function uploadBeerPhoto(dataUrl) {
+  if (!dataUrl || !currentUser) return null;
+  try {
+    const blob = dataUrlToBlob(dataUrl);
+    const ext = blob.type === "image/png" ? "png" : "jpg";
+    const path = `${currentUser.id}/${Date.now()}.${ext}`;
+    const { error } = await supabaseClient.storage.from("beer-photos").upload(path, blob, {
+      contentType: blob.type,
+      upsert: false,
+    });
+    if (error) throw error;
+    const { data } = supabaseClient.storage.from("beer-photos").getPublicUrl(path);
+    return (data && data.publicUrl) || null;
+  } catch (err) {
+    console.error("Beer photo upload failed:", err);
+    return null;
+  }
+}
+
+beerForm.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   // The only field that isn't optional: without location access we
@@ -1083,22 +1166,381 @@ beerForm.addEventListener("submit", (e) => {
     return;
   }
 
-  const entry = {
-    photo: capturedPhotoDataUrl, // null if the user skipped/cancelled the camera step
-    barName: selectedBarName,
-    beerName: selectedBeerName,
-    price: selectedPrice, // null if untouched
-    rating: currentRating, // 0 means "no rating given"
-  };
-  // No backend wired up yet — this is where a save request would go.
-  console.log("New beer entry:", entry);
-  recordBeerName(selectedBeerName);
+  saveBeerBtn.disabled = true;
+
   const lightLat = userLat !== null ? userLat : selectedBarLat;
   const lightLng = userLng !== null ? userLng : selectedBarLng;
+
+  const photoUrl = await uploadBeerPhoto(capturedPhotoDataUrl);
+
+  if (currentUser) {
+    try {
+      const { error } = await supabaseClient.from("beer_entries").insert({
+        user_id: currentUser.id,
+        bar_name: selectedBarName,
+        bar_lat: lightLat,
+        bar_lng: lightLng,
+        beer_name: selectedBeerName,
+        price: selectedPrice, // null if untouched
+        rating: currentRating || 0, // 0 means "no rating given"
+        photo_url: photoUrl,
+      });
+      if (error) throw error;
+    } catch (err) {
+      console.error("Failed to save beer entry to the server:", err);
+    }
+  } else {
+    console.warn("No signed-in user — beer entry was only kept on this device.");
+  }
+
+  recordBeerName(selectedBeerName);
   if (lightLat !== null && lightLng !== null) {
     addBeerLight(lightLat, lightLng);
   }
   incrementBeerCounter();
+  if (currentUser) loadProfileStats();
+
+  saveBeerBtn.disabled = false;
   closeBeerSheet();
   resetBeerForm();
 });
+
+/* ---------------------------------------------------------------- *
+ *  Profile: top-right button opens a bottom drawer with the signed-in
+ *  (anonymous) user's avatar, name, and stats. Avatar/name edits save
+ *  straight to Supabase (profiles is owner-writable via RLS).
+ * ---------------------------------------------------------------- */
+
+const AVATAR_OPTIONS = ["🍺", "🍻", "🍷", "🥂", "🍹", "🌍", "😎", "🎉"];
+
+const menuBtn = document.getElementById("menu-btn");
+const menuPanelList = document.getElementById("menu-panel-list");
+const menuItemProfile = document.getElementById("menu-item-profile");
+const menuItemSettings = document.getElementById("menu-item-settings");
+const menuItemBattlefield = document.getElementById("menu-item-battlefield");
+const menuProfileAvatarEmojiEl = document.getElementById("menu-profile-avatar-emoji");
+const profileSheetBackdrop = document.getElementById("profile-sheet-backdrop");
+const profileSheet = document.getElementById("profile-sheet");
+const profileCloseBtn = document.getElementById("profile-close-btn");
+const profileAvatarBtn = document.getElementById("profile-avatar-btn");
+const profileAvatarEmojiEl = document.getElementById("profile-avatar-emoji");
+const profileAvatarPicker = document.getElementById("profile-avatar-picker");
+const profileUsernameInput = document.getElementById("profile-username-input");
+const profileStatCountEl = document.getElementById("profile-stat-count");
+const profileStatSinceEl = document.getElementById("profile-stat-since");
+const profileFavoriteEl = document.getElementById("profile-favorite");
+const profileStatusEl = document.getElementById("profile-status");
+
+function openProfileSheet() {
+  profileSheetBackdrop.hidden = false;
+  profileSheet.hidden = false;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      profileSheetBackdrop.classList.add("is-open");
+      profileSheet.classList.add("is-open");
+    });
+  });
+
+  profileAvatarPicker.hidden = true;
+  renderProfile();
+  loadProfileStats();
+}
+
+function closeProfileSheet() {
+  profileSheetBackdrop.classList.remove("is-open");
+  profileSheet.classList.remove("is-open");
+  const onTransitionEnd = () => {
+    profileSheetBackdrop.hidden = true;
+    profileSheet.hidden = true;
+    profileSheet.removeEventListener("transitionend", onTransitionEnd);
+  };
+  profileSheet.addEventListener("transitionend", onTransitionEnd);
+}
+
+/* ---------------------------------------------------------------- *
+ *  Menu popover: tapping the menu button opens a small on-the-spot
+ *  menu (not a full sheet) with two items — "Paramètre" opens the
+ *  existing profile/account drawer below; "Battlefield" isn't wired
+ *  to anything yet.
+ * ---------------------------------------------------------------- */
+
+function openMenuList() {
+  menuPanelList.hidden = false;
+  requestAnimationFrame(() => {
+    menuPanelList.classList.add("is-open");
+  });
+  menuBtn.setAttribute("aria-expanded", "true");
+  document.addEventListener("click", onDocumentClickForMenu, true);
+  document.addEventListener("keydown", onDocumentKeydownForMenu);
+}
+
+function closeMenuList() {
+  menuPanelList.classList.remove("is-open");
+  menuBtn.setAttribute("aria-expanded", "false");
+  document.removeEventListener("click", onDocumentClickForMenu, true);
+  document.removeEventListener("keydown", onDocumentKeydownForMenu);
+  const onTransitionEnd = () => {
+    menuPanelList.hidden = true;
+    menuPanelList.removeEventListener("transitionend", onTransitionEnd);
+  };
+  menuPanelList.addEventListener("transitionend", onTransitionEnd);
+}
+
+function onDocumentClickForMenu(e) {
+  if (menuPanelList.contains(e.target) || menuBtn.contains(e.target)) return;
+  closeMenuList();
+}
+
+function onDocumentKeydownForMenu(e) {
+  if (e.key === "Escape") closeMenuList();
+}
+
+menuBtn.addEventListener("click", () => {
+  if (menuPanelList.classList.contains("is-open")) {
+    closeMenuList();
+  } else {
+    openMenuList();
+  }
+});
+
+menuItemProfile.addEventListener("click", () => {
+  closeMenuList();
+  openProfileSheet();
+});
+
+menuItemSettings.addEventListener("click", () => {
+  closeMenuList();
+  openProfileSheet();
+});
+
+// Not specced yet — placeholder so the item is tappable without
+// throwing; wire this up once there's an actual destination for it.
+menuItemBattlefield.addEventListener("click", () => {
+  closeMenuList();
+});
+profileCloseBtn.addEventListener("click", closeProfileSheet);
+profileSheetBackdrop.addEventListener("click", closeProfileSheet);
+
+// Fills in avatar/name/member-since from whatever's currently cached
+// in currentProfile (populated by loadProfile() on sign-in).
+function renderProfile() {
+  if (!currentUser) {
+    profileStatusEl.hidden = false;
+    profileStatusEl.classList.add("field-hint-error");
+    profileStatusEl.textContent = "Couldn't sign you in — profile is unavailable right now.";
+    return;
+  }
+  if (!currentProfile) return;
+
+  profileStatusEl.hidden = true;
+  profileStatusEl.classList.remove("field-hint-error");
+  profileAvatarEmojiEl.textContent = currentProfile.avatar_emoji || "🍺";
+  if (menuProfileAvatarEmojiEl) menuProfileAvatarEmojiEl.textContent = currentProfile.avatar_emoji || "🍺";
+  profileUsernameInput.value = currentProfile.username || "";
+
+  const created = currentProfile.created_at ? new Date(currentProfile.created_at) : null;
+  profileStatSinceEl.textContent =
+    created && !Number.isNaN(created.getTime())
+      ? created.toLocaleDateString("en-US", { month: "short", year: "numeric" })
+      : "–";
+}
+
+// Beer count + favorite beer, scoped to this user, fetched fresh each
+// time the drawer opens (and again right after a new beer is saved).
+async function loadProfileStats() {
+  if (!currentUser) return;
+  try {
+    const { data, error, count } = await supabaseClient
+      .from("beer_entries")
+      .select("beer_name", { count: "exact" })
+      .eq("user_id", currentUser.id);
+    if (error) throw error;
+
+    profileStatCountEl.textContent = typeof count === "number" ? count.toLocaleString("en-US") : "0";
+
+    const tally = {};
+    (data || []).forEach((row) => {
+      if (!row.beer_name) return;
+      tally[row.beer_name] = (tally[row.beer_name] || 0) + 1;
+    });
+    const favorite = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0];
+    profileFavoriteEl.hidden = !favorite;
+    if (favorite) profileFavoriteEl.textContent = `Favorite beer: ${favorite}`;
+  } catch (err) {
+    console.error("Failed to load profile stats:", err);
+    profileStatCountEl.textContent = "–";
+  }
+}
+
+async function saveProfileField(patch) {
+  if (!currentUser) return;
+  profileStatusEl.hidden = false;
+  profileStatusEl.classList.remove("field-hint-error");
+  profileStatusEl.textContent = "Saving…";
+  try {
+    const { error } = await supabaseClient.from("profiles").update(patch).eq("id", currentUser.id);
+    if (error) throw error;
+    currentProfile = Object.assign({}, currentProfile, patch);
+    profileStatusEl.textContent = "Saved";
+    setTimeout(() => {
+      profileStatusEl.hidden = true;
+    }, 1200);
+  } catch (err) {
+    console.error("Failed to save profile:", err);
+    profileStatusEl.classList.add("field-hint-error");
+    profileStatusEl.textContent = "Couldn't save — try again.";
+  }
+}
+
+function renderAvatarPicker() {
+  profileAvatarPicker.innerHTML = "";
+  AVATAR_OPTIONS.forEach((emoji) => {
+    const isSelected = Boolean(currentProfile && currentProfile.avatar_emoji === emoji);
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip profile-avatar-option" + (isSelected ? " is-selected" : "");
+    chip.textContent = emoji;
+    chip.setAttribute("role", "radio");
+    chip.setAttribute("aria-checked", isSelected ? "true" : "false");
+    chip.addEventListener("click", () => selectAvatar(emoji));
+    profileAvatarPicker.appendChild(chip);
+  });
+}
+
+async function selectAvatar(emoji) {
+  profileAvatarEmojiEl.textContent = emoji;
+  if (menuProfileAvatarEmojiEl) menuProfileAvatarEmojiEl.textContent = emoji;
+  profileAvatarPicker.hidden = true;
+  await saveProfileField({ avatar_emoji: emoji });
+}
+
+profileAvatarBtn.addEventListener("click", () => {
+  const opening = profileAvatarPicker.hidden;
+  if (opening) renderAvatarPicker();
+  profileAvatarPicker.hidden = !opening;
+});
+
+async function saveUsername() {
+  const value = profileUsernameInput.value.trim();
+  if (!currentProfile || value === (currentProfile.username || "")) return;
+  await saveProfileField({ username: value || "Beer Explorer" });
+}
+
+profileUsernameInput.addEventListener("blur", saveUsername);
+profileUsernameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    profileUsernameInput.blur();
+  }
+});
+
+/* ---------------------------------------------------------------- *
+ *  Stats drawer: tapping the giant counter opens a second sheet with
+ *  worldwide numbers (as opposed to the profile drawer's per-user
+ *  stats) — total logged, activity in the last 24h, average rating,
+ *  average price, and the current top beer/spot.
+ * ---------------------------------------------------------------- */
+
+const statsSheetBackdrop = document.getElementById("stats-sheet-backdrop");
+const statsSheet = document.getElementById("stats-sheet");
+const statsCloseBtn = document.getElementById("stats-close-btn");
+const statsTotalEl = document.getElementById("stats-total-value");
+const statsTodayEl = document.getElementById("stats-today-value");
+const statsRatingEl = document.getElementById("stats-rating-value");
+const statsPriceEl = document.getElementById("stats-price-value");
+const statsTopBeerEl = document.getElementById("stats-top-beer");
+const statsTopBarEl = document.getElementById("stats-top-bar");
+const statsStatusEl = document.getElementById("stats-status");
+
+function openStatsSheet() {
+  statsSheetBackdrop.hidden = false;
+  statsSheet.hidden = false;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      statsSheetBackdrop.classList.add("is-open");
+      statsSheet.classList.add("is-open");
+    });
+  });
+
+  loadWorldStats();
+}
+
+function closeStatsSheet() {
+  statsSheetBackdrop.classList.remove("is-open");
+  statsSheet.classList.remove("is-open");
+  const onTransitionEnd = () => {
+    statsSheetBackdrop.hidden = true;
+    statsSheet.hidden = true;
+    statsSheet.removeEventListener("transitionend", onTransitionEnd);
+  };
+  statsSheet.addEventListener("transitionend", onTransitionEnd);
+}
+
+beerCounterEl.addEventListener("click", openStatsSheet);
+statsCloseBtn.addEventListener("click", closeStatsSheet);
+statsSheetBackdrop.addEventListener("click", closeStatsSheet);
+
+// Fetches every entry's lightweight fields and tallies them client-side
+// — simplest approach while the table stays small; swap for a Postgres
+// view/RPC (avg, count, group by) if the table grows large.
+async function loadWorldStats() {
+  statsTotalEl.textContent = "–";
+  statsTodayEl.textContent = "–";
+  statsRatingEl.textContent = "–";
+  statsPriceEl.textContent = "–";
+  statsTopBeerEl.hidden = true;
+  statsTopBarEl.hidden = true;
+  statsStatusEl.hidden = true;
+
+  try {
+    const { data, error } = await supabaseClient
+      .from("beer_entries")
+      .select("beer_name, bar_name, price, rating, created_at");
+    if (error) throw error;
+
+    const rows = data || [];
+    const total = rows.length;
+
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const loggedToday = rows.filter((r) => r.created_at && new Date(r.created_at).getTime() >= dayAgo).length;
+
+    const rated = rows.filter((r) => typeof r.rating === "number" && r.rating > 0);
+    const avgRating = rated.length ? rated.reduce((sum, r) => sum + r.rating, 0) / rated.length : null;
+
+    const priced = rows.filter((r) => r.price !== null && r.price !== undefined);
+    const avgPrice = priced.length ? priced.reduce((sum, r) => sum + Number(r.price), 0) / priced.length : null;
+
+    const topBeer = mostCommon(rows.map((r) => r.beer_name));
+    const topBar = mostCommon(rows.map((r) => r.bar_name));
+
+    statsTotalEl.textContent = total.toLocaleString("en-US");
+    statsTodayEl.textContent = loggedToday.toLocaleString("en-US");
+    statsRatingEl.textContent = avgRating !== null ? `${avgRating.toFixed(1)} ★` : "–";
+    statsPriceEl.textContent = avgPrice !== null ? `$${avgPrice.toFixed(2)}` : "–";
+
+    statsTopBeerEl.hidden = !topBeer;
+    if (topBeer) statsTopBeerEl.textContent = `Most logged beer: ${topBeer}`;
+
+    statsTopBarEl.hidden = !topBar;
+    if (topBar) statsTopBarEl.textContent = `Most active spot: ${topBar}`;
+  } catch (err) {
+    console.error("Failed to load worldwide stats:", err);
+    statsStatusEl.hidden = false;
+    statsStatusEl.classList.add("field-hint-error");
+    statsStatusEl.textContent = "Couldn't load stats — try again.";
+  }
+}
+
+// Shared little tally helper — most frequent non-empty string in a list.
+function mostCommon(values) {
+  const tally = {};
+  values.forEach((v) => {
+    if (!v) return;
+    tally[v] = (tally[v] || 0) + 1;
+  });
+  const keys = Object.keys(tally);
+  if (!keys.length) return null;
+  return keys.sort((a, b) => tally[b] - tally[a])[0];
+}
+
+})();
