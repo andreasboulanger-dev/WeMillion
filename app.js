@@ -1,13 +1,21 @@
 const HOME_VIEW = {
   center: [0, 0],
-  // Low enough to fit the entire globe in view on load, but pulled in
-  // a bit further than 0 so the planet reads bigger on screen. Higher
-  // zooms (>1.4) start pulling in more detailed coastlines, which isn't
-  // needed when the whole planet is visible at once anyway.
-  zoom: 0.9,
+  // Low enough to fit the entire globe in view, but pulled in a bit
+  // further than 0 so the planet reads bigger on screen. Higher zooms
+  // (>1.4) start pulling in more detailed coastlines, which isn't
+  // needed when the whole planet is visible at once anyway. This is
+  // where the intro animation below comes to rest.
+  zoom: 1.3,
   pitch: 0,
   bearing: 0,
 };
+
+// Intro animation: the globe starts as a tiny dot, far from the
+// viewer, then slowly drifts in and decelerates hard so it settles
+// right at HOME_VIEW's zoom instead of overshooting past the edges of
+// the screen.
+const INTRO_START_ZOOM = -1.6;
+const INTRO_DURATION_MS = 5000;
 
 /* ---------------------------------------------------------------- *
  *  Giant counter: tracks how many times *this* user has tapped
@@ -71,8 +79,13 @@ const map = new maplibregl.Map({
   // Swap for MapTiler / Protomaps / your own style URL if you prefer.
   style: "https://tiles.openfreemap.org/styles/dark",
   center: HOME_VIEW.center,
-  zoom: HOME_VIEW.zoom,
-  attributionControl: { compact: true },
+  // Starts far zoomed out; the intro animation below eases it in to
+  // HOME_VIEW.zoom once the style/globe projection are ready. minZoom
+  // is lowered from MapLibre's default of 0 so this negative starting
+  // zoom isn't silently clamped away before it can even render.
+  zoom: INTRO_START_ZOOM,
+  minZoom: -2,
+  attributionControl: false,
   dragRotate: true,
   touchZoomRotate: true,
   // antialias sharpens coastlines/borders that otherwise look
@@ -131,7 +144,17 @@ map.on("style.load", () => {
   updateStarfield();
   map.on("move", updateStarfield);
 
-  startAutoRotate();
+  // Slow, dramatic entrance: hard deceleration (quintic ease-out) so
+  // the globe drifts toward the viewer over several seconds and
+  // settles at HOME_VIEW's zoom rather than overshooting past the
+  // screen edges. Auto-rotate only kicks in once this settles, so it
+  // doesn't fight the zoom.
+  map.easeTo({
+    zoom: HOME_VIEW.zoom,
+    duration: INTRO_DURATION_MS,
+    easing: (t) => 1 - Math.pow(1 - t, 5),
+  });
+  map.once("moveend", startAutoRotate);
 });
 
 /* ---------------------------------------------------------------- *
@@ -159,7 +182,7 @@ function updateStarfield() {
  *  let go, rather than staying off for the rest of the session.
  * ---------------------------------------------------------------- */
 
-const AUTO_ROTATE_DEG_PER_TICK = 0.04; // doubled since it now runs half as often
+const AUTO_ROTATE_DEG_PER_TICK = 0.12;
 const AUTO_ROTATE_INTERVAL_MS = 50; // ~20fps instead of every animation frame (~60fps)
 const AUTO_ROTATE_RESUME_DELAY_MS = 2000;
 
