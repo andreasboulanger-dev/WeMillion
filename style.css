@@ -10,6 +10,31 @@ html, body {
   background: #05070d;
 }
 
+/* Material Symbols Rounded — the app's one icon set. Unfilled
+   (outlined) by default; add .is-filled (or .is-active, used
+   interchangeably on active/selected controls) to switch to the
+   filled glyph via the variable font's FILL axis, no separate icon
+   needed. */
+.material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
+  font-weight: normal;
+  font-style: normal;
+  display: inline-block;
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: normal;
+  word-wrap: normal;
+  white-space: nowrap;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.material-symbols-rounded.is-filled,
+.material-symbols-rounded.is-active {
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24;
+}
+
 /* Starfield backdrop. Oversized (inset -25%) and rotatable via transform
    so spinning it to follow the globe's bearing never reveals empty
    corners. Sits behind the map canvas — visible through the open sky
@@ -74,7 +99,7 @@ html, body {
   margin: 0;
   cursor: pointer;
   pointer-events: auto;
-  font: 800 clamp(56px, 16vw, 148px)/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 800 clamp(56px, 16vw, 148px)/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: #ffdb7a;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -93,7 +118,7 @@ html, body {
 }
 
 .beer-counter-label {
-  font: 600 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 600 13px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: rgba(255, 255, 255, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.14em;
@@ -105,7 +130,7 @@ html, body {
    rather than a callout. */
 #beer-counter-remaining {
   margin-top: 2px;
-  font: 400 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 400 11px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: rgba(255, 255, 255, 0.32);
   letter-spacing: 0.05em;
   font-variant-numeric: tabular-nums;
@@ -159,14 +184,15 @@ html, body {
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 13px 22px;
+  justify-content: center;
+  height: 56px;
+  padding: 0 64px;
   border: none;
   border-radius: 999px;
   background: #ffdb7a;
   color: #241a04;
-  font: 600 15px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
-  letter-spacing: 0.01em;
+  font: 500 14px/20px "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.006em;
   cursor: pointer;
   box-shadow: 0 4px 18px rgba(255, 214, 110, 0.35), 0 2px 8px rgba(0, 0, 0, 0.35);
 }
@@ -178,10 +204,6 @@ html, body {
 #add-beer-btn:focus-visible {
   outline: 2px solid #fff6d6;
   outline-offset: 3px;
-}
-
-.add-beer-btn-icon {
-  font-size: 16px;
 }
 
 /* Small photo thumbnail at the top of the drawer — a glance back at
@@ -234,7 +256,7 @@ html, body {
   max-height: min(78vh, calc(100vh - 96px));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 10px 24px calc(24px + env(safe-area-inset-bottom));
+  padding: calc(16px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
   border-radius: 20px 20px 0 0;
   background: #12151f;
   color: #fff;
@@ -245,6 +267,17 @@ html, body {
 
 .bottom-sheet.is-open {
   transform: translateY(0);
+}
+
+/* While actively being dragged, the transition is switched off so the
+   sheet tracks the finger 1:1 instead of lagging behind an eased
+   transition meant for the open/close snap. */
+.bottom-sheet.is-dragging {
+  transition: none;
+}
+
+.sheet-backdrop.is-dragging {
+  transition: none;
 }
 
 /* Full-screen variant — used by the profile drawer so it covers the
@@ -265,40 +298,48 @@ html, body {
 }
 
 .sheet-handle {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
   width: 36px;
   height: 4px;
-  margin: 10px auto 6px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.2);
-  flex-shrink: 0;
+  /* Bigger invisible hit area than the visible pill (padding, clipped
+     off the background so it stays invisible), and touch-action: none
+     stops the browser's own touch-scroll/gesture handling from
+     competing with the drag-to-dismiss logic below. */
+  padding: 14px 40px;
+  background-clip: content-box;
+  touch-action: none;
+  cursor: grab;
+}
+
+.sheet-handle:active {
+  cursor: grabbing;
 }
 
 .sheet-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  /* The menu button floats fixed at top-right (16px inset, 40px
+     wide) above every sheet — this padding keeps the right-aligned
+     title clear of it instead of rendering underneath. */
+  padding-right: 48px;
   margin-bottom: 18px;
 }
 
 .sheet-header h2 {
-  font: 600 18px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-
-#sheet-close-btn {
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  font-size: 14px;
-  cursor: pointer;
+  font: 600 18px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-align: right;
 }
 
 .field-label {
   display: block;
   margin-bottom: 10px;
-  font: 500 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 500 13px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: rgba(255, 255, 255, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -321,7 +362,7 @@ html, body {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.05);
   color: #fff;
-  font: 500 14px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 500 14px/1.2 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
   max-width: 100%;
   overflow: hidden;
@@ -363,7 +404,7 @@ html, body {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.05);
   color: #fff;
-  font: 400 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 400 15px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 .inline-search input::placeholder {
@@ -385,9 +426,20 @@ html, body {
 .search-result {
   padding: 12px 14px;
   border-radius: 10px;
-  font: 400 14px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: #fff;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.search-result-name {
+  font: 400 14px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #fff;
+}
+
+.search-result-location {
+  font: 400 12px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .search-result:hover,
@@ -402,14 +454,14 @@ html, body {
 
 .search-hint {
   padding: 12px 14px;
-  font: 400 13px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 400 13px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: rgba(255, 255, 255, 0.4);
 }
 
 .field-hint {
   min-height: 16px;
   margin-top: 8px;
-  font: 400 12px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 400 12px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: rgba(255, 255, 255, 0.4);
 }
 
@@ -451,7 +503,7 @@ html, body {
   border: none;
   background: none;
   color: rgba(255, 255, 255, 0.55);
-  font: 600 17px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 600 17px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
   transform-origin: center;
   will-change: transform, opacity;
@@ -530,10 +582,13 @@ html, body {
   border: none;
   background: none;
   color: rgba(255, 255, 255, 0.2);
-  font-size: 30px;
-  line-height: 1;
   cursor: pointer;
   transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.star .material-symbols-rounded {
+  font-size: 30px;
+  color: inherit;
 }
 
 .star:focus-visible {
@@ -544,6 +599,10 @@ html, body {
 
 .star.is-filled {
   color: #ffdb7a;
+}
+
+.star.is-filled .material-symbols-rounded {
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24;
 }
 
 .star:active {
@@ -558,7 +617,7 @@ html, body {
   border-radius: 12px;
   background: #ffdb7a;
   color: #241a04;
-  font: 600 15px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 600 15px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
 }
 
@@ -601,6 +660,7 @@ html, body {
 }
 
 .menu-icon-btn {
+  position: relative;
   width: 40px;
   height: 40px;
   display: flex;
@@ -617,14 +677,35 @@ html, body {
   cursor: pointer;
 }
 
-.menu-icon-btn svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+/* M3 keeps the visible container at 40dp but still requires a 48dp
+   touch target — expanded here with an invisible hit area rather than
+   growing the circle itself, so the 16dp screen-edge margin below
+   still lines up with what's actually drawn. */
+.menu-icon-btn::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.menu-icon-btn .material-symbols-rounded {
+  font-size: 24px;
+  color: currentColor;
+}
+
+/* Swappable icon slot inside the menu button — its content is
+   replaced in JS to reflect whichever popover item was tapped last
+   (house / gear / avatar emoji / bar-chart / battlefield flag). */
+.menu-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.menu-btn-avatar {
+  font-size: 20px;
+  line-height: 1;
 }
 
 .menu-icon-btn:active {
@@ -666,14 +747,15 @@ html, body {
 .menu-popover-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  padding: 10px 12px;
+  min-height: 48px;
+  padding: 12px 12px;
   border: none;
   border-radius: 9px;
   background: none;
   color: #fff;
-  font: 500 14px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 500 14px/1.2 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   text-align: left;
   cursor: pointer;
 }
@@ -689,25 +771,25 @@ html, body {
 }
 
 .menu-popover-item-text-only {
-  padding-left: 34px;
+  padding-left: 48px;
 }
 
 .menu-popover-icon {
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
-  fill: none;
-  stroke: #ffdb7a;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: #ffdb7a;
 }
 
 .menu-popover-avatar {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: 19px;
   line-height: 1;
 }
 
@@ -749,7 +831,7 @@ html, body {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.05);
   color: #fff;
-  font: 500 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 500 15px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 #profile-username-input::placeholder {
@@ -789,13 +871,13 @@ html, body {
 }
 
 .profile-stat-value {
-  font: 700 22px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 700 22px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: #ffdb7a;
   font-variant-numeric: tabular-nums;
 }
 
 .profile-stat-label {
-  font: 500 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 500 11px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color: rgba(255, 255, 255, 0.5);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -804,6 +886,54 @@ html, body {
 #profile-favorite,
 #profile-status {
   margin-top: 14px;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Legend popup: center-screen celebration shown right after Save.
+ *  Decorative and self-dismissing, so it never blocks taps on
+ *  whatever's underneath.
+ * ------------------------------------------------------------------ */
+
+.legend-popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 40px;
+  border-radius: 20px;
+  background: rgba(18, 21, 31, 0.85);
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  color: #fff;
+  text-align: center;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.85);
+  opacity: 0;
+  transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.16, 1), opacity 0.3s ease;
+}
+
+.legend-popup.is-open {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+}
+
+.legend-popup[hidden] {
+  display: none;
+}
+
+.legend-popup-emoji {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.legend-popup-text {
+  font: 700 20px/1.2 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 /* ------------------------------------------------------------------ *
@@ -822,8 +952,151 @@ html, body {
   min-width: calc(50% - 6px);
 }
 
-#stats-top-beer,
-#stats-top-bar,
 #stats-status {
   margin-top: 14px;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Leaderboard — inside the stats drawer. Two rows of pill tabs
+ *  (what to rank, and over what time window) reuse the existing
+ *  .chip styling, then a plain ranked list below.
+ * ------------------------------------------------------------------ */
+
+#leaderboard-section {
+  margin-top: 24px;
+}
+
+/* iOS-style segmented control for the 24h / Week / All time toggle. A
+   pill-shaped thumb slides behind the selected segment; buttons sit on
+   top and just fade their text color in/out. */
+.segmented-control {
+  position: relative;
+  display: flex;
+  margin-top: 10px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.segmented-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  bottom: 3px;
+  width: calc((100% - 6px) / 3);
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.28s cubic-bezier(0.25, 1, 0.5, 1);
+  will-change: transform;
+}
+
+.segmented-btn {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  padding: 7px 0;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.5);
+  font: 500 13px/1.2 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-align: center;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.segmented-btn.is-selected {
+  color: #fff;
+  font-weight: 600;
+}
+
+.segmented-btn:focus-visible {
+  outline: 2px solid #ffdb7a;
+  outline-offset: 2px;
+}
+
+/* Leaderboard panels stack vertically, one category after another
+   (Users / Venues / Cities / Countries) instead of tap-to-switch tabs. */
+.leaderboard-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-top: 16px;
+}
+
+.leaderboard-panel-title {
+  margin: 0 0 8px;
+  font: 600 13px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.leaderboard-list {
+  list-style: none;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-radius: 10px;
+}
+
+.leaderboard-row:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.leaderboard-row.is-you {
+  background: rgba(255, 219, 122, 0.1);
+}
+
+.leaderboard-rank {
+  width: 22px;
+  flex-shrink: 0;
+  text-align: center;
+  font: 700 13px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.leaderboard-row:nth-child(1) .leaderboard-rank {
+  color: #ffd54a;
+}
+
+.leaderboard-row:nth-child(2) .leaderboard-rank {
+  color: #d8dee8;
+}
+
+.leaderboard-row:nth-child(3) .leaderboard-rank {
+  color: #e0a06a;
+}
+
+.leaderboard-emoji {
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.leaderboard-name {
+  flex: 1;
+  min-width: 0;
+  font: 500 14px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-count {
+  flex-shrink: 0;
+  font: 600 13px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #ffdb7a;
 }

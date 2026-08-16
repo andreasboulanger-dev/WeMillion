@@ -6,6 +6,16 @@
   <title>Globe Map</title>
 
   <link href="https://unpkg.com/maplibre-gl@5.1.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap"
+    rel="stylesheet"
+  />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+    rel="stylesheet"
+  />
   <link rel="stylesheet" href="style.css" />
   <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
@@ -22,26 +32,30 @@
        home/base screen — iOS Sports-app-style menu. -->
   <div id="menu-panel" class="menu-panel">
     <button id="menu-btn" class="menu-icon-btn" type="button" aria-label="Menu" aria-haspopup="menu" aria-expanded="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3 11.5 12 4l9 7.5"></path>
-        <path d="M5.5 10v8.5a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V10"></path>
-        <path d="M9.5 19.5V14a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v5.5"></path>
-      </svg>
+      <span id="menu-btn-icon" class="menu-btn-icon">
+        <span class="material-symbols-rounded is-filled" id="menu-btn-icon-glyph">home</span>
+      </span>
     </button>
 
     <div id="menu-panel-list" class="menu-panel-list" role="menu" aria-labelledby="menu-btn" hidden>
+      <button type="button" class="menu-popover-item" id="menu-item-home" role="menuitem">
+        <span class="material-symbols-rounded menu-popover-icon" data-icon-kind="home">home</span>
+        <span>Home</span>
+      </button>
       <button type="button" class="menu-popover-item" id="menu-item-profile" role="menuitem">
         <span id="menu-profile-avatar-emoji" class="menu-popover-icon menu-popover-avatar" aria-hidden="true">🍺</span>
         <span>Profil</span>
       </button>
       <button type="button" class="menu-popover-item" id="menu-item-settings" role="menuitem">
-        <svg class="menu-popover-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
+        <span class="material-symbols-rounded menu-popover-icon" data-icon-kind="settings">settings</span>
         <span>Paramètre</span>
       </button>
-      <button type="button" class="menu-popover-item menu-popover-item-text-only" id="menu-item-battlefield" role="menuitem">
+      <button type="button" class="menu-popover-item" id="menu-item-stats" role="menuitem">
+        <span class="material-symbols-rounded menu-popover-icon" data-icon-kind="stats">bar_chart</span>
+        <span>Stats</span>
+      </button>
+      <button type="button" class="menu-popover-item" id="menu-item-battlefield" role="menuitem">
+        <span class="material-symbols-rounded menu-popover-icon" data-icon-kind="battlefield">flag</span>
         <span>Battlefield</span>
       </button>
     </div>
@@ -61,7 +75,6 @@
        rear camera directly on mobile; falls back to a plain file picker
        on desktop. -->
   <button id="add-beer-btn" type="button">
-    <span class="add-beer-btn-icon" aria-hidden="true">🍺</span>
     Add my beer
   </button>
   <input
@@ -79,7 +92,6 @@
 
     <div class="sheet-header">
       <h2 id="beer-sheet-title">Add my beer</h2>
-      <button id="sheet-close-btn" type="button" aria-label="Close">✕</button>
     </div>
 
     <form id="beer-form">
@@ -116,11 +128,11 @@
 
       <span class="field-label" id="rating-label">Rating <span class="field-optional">(optional)</span></span>
       <div class="star-rating" role="radiogroup" aria-labelledby="rating-label">
-        <button type="button" class="star" data-value="1" role="radio" aria-checked="false" aria-label="1 star">★</button>
-        <button type="button" class="star" data-value="2" role="radio" aria-checked="false" aria-label="2 stars">★</button>
-        <button type="button" class="star" data-value="3" role="radio" aria-checked="false" aria-label="3 stars">★</button>
-        <button type="button" class="star" data-value="4" role="radio" aria-checked="false" aria-label="4 stars">★</button>
-        <button type="button" class="star" data-value="5" role="radio" aria-checked="false" aria-label="5 stars">★</button>
+        <button type="button" class="star" data-value="1" role="radio" aria-checked="false" aria-label="1 star"><span class="material-symbols-rounded">star</span></button>
+        <button type="button" class="star" data-value="2" role="radio" aria-checked="false" aria-label="2 stars"><span class="material-symbols-rounded">star</span></button>
+        <button type="button" class="star" data-value="3" role="radio" aria-checked="false" aria-label="3 stars"><span class="material-symbols-rounded">star</span></button>
+        <button type="button" class="star" data-value="4" role="radio" aria-checked="false" aria-label="4 stars"><span class="material-symbols-rounded">star</span></button>
+        <button type="button" class="star" data-value="5" role="radio" aria-checked="false" aria-label="5 stars"><span class="material-symbols-rounded">star</span></button>
       </div>
 
       <button id="save-beer-btn" type="submit">Save</button>
@@ -134,7 +146,6 @@
 
     <div class="sheet-header">
       <h2 id="profile-sheet-title">Profile</h2>
-      <button id="profile-close-btn" type="button" aria-label="Close">✕</button>
     </div>
 
     <div id="profile-avatar-row">
@@ -166,12 +177,11 @@
 
   <!-- Stats drawer: opened by tapping the giant counter. -->
   <div id="stats-sheet-backdrop" class="sheet-backdrop" hidden></div>
-  <div id="stats-sheet" class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="stats-sheet-title" hidden>
+  <div id="stats-sheet" class="bottom-sheet bottom-sheet-full" role="dialog" aria-modal="true" aria-labelledby="stats-sheet-title" hidden>
     <div class="sheet-handle" aria-hidden="true"></div>
 
     <div class="sheet-header">
       <h2 id="stats-sheet-title">Worldwide stats</h2>
-      <button id="stats-close-btn" type="button" aria-label="Close">✕</button>
     </div>
 
     <div id="stats-grid">
@@ -193,9 +203,58 @@
       </div>
     </div>
 
-    <p id="stats-top-beer" class="field-hint" hidden></p>
-    <p id="stats-top-bar" class="field-hint" hidden></p>
     <p id="stats-status" class="field-hint" hidden></p>
+
+    <div id="leaderboard-section">
+      <span class="field-label" id="leaderboard-scope-label">Leaderboard</span>
+
+      <div id="leaderboard-range-row" class="segmented-control" role="radiogroup" aria-label="Time range">
+        <span id="leaderboard-range-thumb" class="segmented-thumb" aria-hidden="true"></span>
+        <button type="button" class="segmented-btn leaderboard-range-tab" data-range="24h" aria-pressed="false">24h</button>
+        <button type="button" class="segmented-btn leaderboard-range-tab" data-range="week" aria-pressed="false">Week</button>
+        <button type="button" class="segmented-btn leaderboard-range-tab is-selected" data-range="all" aria-pressed="true">All time</button>
+      </div>
+
+      <div id="leaderboard-scroll" class="leaderboard-scroll">
+        <section class="leaderboard-panel" data-scope="users">
+          <h3 class="leaderboard-panel-title">Users</h3>
+          <ol class="leaderboard-list"></ol>
+          <p class="field-hint leaderboard-empty" hidden>No entries in this range yet.</p>
+          <p class="field-hint leaderboard-status" hidden></p>
+        </section>
+        <section class="leaderboard-panel" data-scope="beer">
+          <h3 class="leaderboard-panel-title">Beer</h3>
+          <ol class="leaderboard-list"></ol>
+          <p class="field-hint leaderboard-empty" hidden>No entries in this range yet.</p>
+          <p class="field-hint leaderboard-status" hidden></p>
+        </section>
+        <section class="leaderboard-panel" data-scope="venues">
+          <h3 class="leaderboard-panel-title">Venues</h3>
+          <ol class="leaderboard-list"></ol>
+          <p class="field-hint leaderboard-empty" hidden>No entries in this range yet.</p>
+          <p class="field-hint leaderboard-status" hidden></p>
+        </section>
+        <section class="leaderboard-panel" data-scope="cities">
+          <h3 class="leaderboard-panel-title">Cities</h3>
+          <ol class="leaderboard-list"></ol>
+          <p class="field-hint leaderboard-empty" hidden>No entries in this range yet.</p>
+          <p class="field-hint leaderboard-status" hidden></p>
+        </section>
+        <section class="leaderboard-panel" data-scope="countries">
+          <h3 class="leaderboard-panel-title">Countries</h3>
+          <ol class="leaderboard-list"></ol>
+          <p class="field-hint leaderboard-empty" hidden>No entries in this range yet.</p>
+          <p class="field-hint leaderboard-status" hidden></p>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fired right after Save: shows instantly (no network wait), then
+       fades itself out a couple seconds later. -->
+  <div id="legend-popup" class="legend-popup" role="status" aria-live="polite" hidden>
+    <span class="legend-popup-emoji" aria-hidden="true">🍻</span>
+    <span class="legend-popup-text">You're a Legend!</span>
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@5.1.1/dist/maplibre-gl.js"></script>
