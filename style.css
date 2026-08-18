@@ -143,69 +143,42 @@ html, body {
 }
 
 /* ------------------------------------------------------------------ *
- *  Counter time-range control ("Timing"): an icon-only button (exact
- *  look of the top-right menu button, via the shared .menu-icon-btn
- *  class) that reveals a segmented pill to its right. Sits top-left,
- *  the mirror image of the top-right menu button — same top offset,
- *  same z-index, left edge instead of right.
+ *  Generic draggable icon row: a horizontal, icon-only segmented
+ *  control used for every section inside the top-right "Layer"
+ *  popover (Map / Show / Time — see #view-menu-list). A solid pill
+ *  sits under whichever icon is active; the pill is itself a
+ *  draggable thumb, finger-following like an iOS segmented control —
+ *  press and drag it across the row, or just tap an icon directly
+ *  (see createIconRow in app.js). One row per section, each with its
+ *  own thumb, so the three sections stay fully independent.
  * ------------------------------------------------------------------ */
-
-.counter-range-panel {
-  position: absolute;
-  top: calc(16px + env(safe-area-inset-top));
-  left: calc(16px + env(safe-area-inset-left));
-  z-index: 25;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  opacity: 1;
-  transition: opacity 0.15s ease;
-}
 
 /* Hidden while a drawer opened from the menu popover (Profil / Stats
    / Battlefield) is open — "Add my beer" isn't reached from that
    popover, so it leaves this button alone. */
-.counter-range-panel.is-hidden,
-.satellite-toggle-panel.is-hidden {
+.view-menu-panel.is-hidden {
   opacity: 0;
   pointer-events: none;
 }
 
-/* Long pill, same frosted-glass treatment as the menu button/list.
-   transform-origin sits left so it reads as growing out of the icon
-   button when it opens. */
-.counter-range-track {
+.popover-icon-row {
   position: relative;
   display: flex;
   align-items: center;
   height: 40px;
+  margin: 4px 0 2px;
   padding: 3px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(8px) saturate(180%);
-  -webkit-backdrop-filter: blur(8px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  transform-origin: left center;
-  transform: scaleX(0.9);
-  opacity: 0;
-  transition: transform 0.15s ease, opacity 0.15s ease;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.counter-range-track.is-open {
-  transform: scaleX(1);
-  opacity: 1;
-}
-
-.counter-range-track[hidden] {
-  display: none;
-}
-
-/* The draggable "active" pill. Sits UNDER the segment buttons in
-   z-index, but the currently-selected segment's text gets
-   pointer-events: none (see .counter-range-seg.is-selected below) so
-   presses over it fall straight through to this thumb instead of
-   being swallowed by the (invisible, transparent) button on top. */
-.counter-range-thumb {
+/* The draggable "active" pill. Sits UNDER the icon buttons in
+   z-index, but the currently-active icon gets pointer-events: none
+   (see .popover-icon-row-item.is-active below) so presses over it
+   fall straight through to this thumb instead of being swallowed by
+   the (invisible, transparent) button on top. */
+.popover-icon-row-thumb {
   position: absolute;
   top: 3px;
   left: 3px;
@@ -221,17 +194,16 @@ html, body {
   cursor: grab;
 }
 
-.counter-range-thumb.is-dragging {
+.popover-icon-row-thumb.is-dragging {
   transition: none;
   cursor: grabbing;
 }
 
-.counter-range-seg {
+.popover-icon-row-item {
   position: relative;
   z-index: 2;
   flex: 1 1 0;
   height: 100%;
-  padding: 0 10px;
   border: none;
   background: transparent;
   border-radius: 999px;
@@ -243,7 +215,12 @@ html, body {
   transition: color 0.2s ease;
 }
 
-/* Each segment is a clock glyph with a small badge (∞ / W / 24)
+.popover-icon-row-item .material-symbols-rounded {
+  font-size: 22px;
+  color: currentColor;
+}
+
+/* Each Time icon is a clock glyph with a small badge (∞ / W / 24)
    centered low on its face, so it reads as "a clock for this range"
    rather than a bare label. */
 .counter-range-icon {
@@ -271,15 +248,23 @@ html, body {
   pointer-events: none;
 }
 
-.counter-range-seg.is-selected {
+.popover-icon-row-item.is-active {
   color: #241a04;
   font-weight: 600;
-  /* Lets drags/taps starting on the selected label reach the thumb
+  /* Lets drags/taps starting on the active icon reach the thumb
      directly beneath it instead of being caught here. */
   pointer-events: none;
 }
 
-.counter-range-seg:focus-visible {
+/* Active icon switches to the filled/solid glyph (FILL 1) via the
+   same variable-font axis .is-filled/.is-active use elsewhere in the
+   app — see the shared .material-symbols-rounded rule near the top
+   of this file. */
+.popover-icon-row-item.is-active .material-symbols-rounded {
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24;
+}
+
+.popover-icon-row-item:focus-visible {
   outline: 2px solid #ffdb7a;
   outline-offset: 2px;
 }
@@ -699,8 +684,7 @@ html, body {
 
 /* Drawers with a back button (Profil / Stats / Battlefield): the
    button is pinned to the fixed top-left corner spot (see
-   .sheet-back-btn below, same coordinates as .counter-range-panel's
-   schedule button), so it no longer takes up flow space here. The
+   .sheet-back-btn below), so it no longer takes up flow space here. The
    header is pulled up and given a matching 40px height so the
    title's vertical middle lines up exactly with the back button's
    vertical middle — this sheet's padding-top (27px) minus 11px
@@ -721,11 +705,11 @@ html, body {
 
 /* Back button: only present on drawers reached from the menu popover
    (Profil / Stats / Battlefield) — "Add my beer" has no back button
-   since it isn't one of those destinations. Pinned to the exact same
-   fixed top-left spot as the schedule button (.counter-range-panel /
-   .counter-range-btn): same top/left offsets, same 40px size. Fixed
-   rather than flowed in the header so it stays put on screen while
-   the drawer's content scrolls underneath it. */
+   since it isn't one of those destinations. Pinned to a fixed
+   top-left spot: same top/left offsets, same 40px size as the
+   top-right menu buttons. Fixed rather than flowed in the header so
+   it stays put on screen while the drawer's content scrolls
+   underneath it. */
 .sheet-back-btn {
   position: fixed;
   top: calc(16px + env(safe-area-inset-top));
@@ -894,6 +878,103 @@ html, body {
 
 .field-hint-error {
   color: #ff8a8a;
+}
+
+/* League card: reuses .inline-search's input look and .field-hint for
+   status text. Two mutually-exclusive inner blocks (#profile-league-none
+   / #profile-league-active) toggled by renderProfileLeague() in app.js. */
+.profile-league-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#profile-league-code-input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font: 600 15px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#profile-league-code-input::placeholder {
+  text-transform: none;
+  letter-spacing: normal;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+#profile-league-code-input:focus-visible {
+  outline: 2px solid #ffdb7a;
+  outline-offset: 1px;
+}
+
+.profile-league-btn {
+  flex-shrink: 0;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 12px;
+  background: #ffdb7a;
+  color: #241a04;
+  font: 600 14px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.profile-league-btn-secondary {
+  width: 100%;
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.profile-league-btn-danger {
+  width: 100%;
+  margin-top: 14px;
+  background: rgba(255, 138, 138, 0.14);
+  color: #ff8a8a;
+}
+
+.profile-league-btn:active {
+  transform: scale(0.97);
+}
+
+.profile-league-btn:focus-visible {
+  outline: 2px solid #ffdb7a;
+  outline-offset: 2px;
+}
+
+.profile-league-active-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.profile-league-name {
+  font: 600 16px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #fff;
+}
+
+.profile-league-count {
+  flex-shrink: 0;
+  font: 400 13px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.profile-league-invite-code {
+  flex: 1;
+  padding: 12px 14px;
+  border: 1px dashed rgba(255, 219, 122, 0.4);
+  border-radius: 12px;
+  background: rgba(255, 219, 122, 0.08);
+  color: #ffdb7a;
+  font: 700 15px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-align: center;
 }
 
 /* Price: an Apple-style horizontal wheel picker ($ skip, then $0-$20).
@@ -1175,13 +1256,47 @@ html, body {
 /* Satellite toggle: pinned directly under the menu button, same
    right edge, same z-index — a second icon in the same top-right
    stack rather than a spot of its own. */
-.satellite-toggle-panel {
+.view-menu-panel {
   position: absolute;
   top: calc(16px + 40px + 8px + env(safe-area-inset-top));
   right: calc(16px + env(safe-area-inset-right));
-  z-index: 25;
+  /* Same column layout as .menu-panel above: without this, the
+     popover list (wider than the button) falls into normal block
+     flow and sits flush with the panel's left edge instead of
+     hugging the button's right edge — which visually reads as the
+     button "jumping" to the popover's top-left corner when it opens. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  /* One below .menu-panel (25): they're equal-height siblings in the
+     top-right stack, but without this the popover opened from the
+     menu button — a later sibling in the DOM at the same z-index —
+     would render underneath this button instead of over it. */
+  z-index: 24;
   opacity: 1;
   transition: opacity 0.15s ease;
+}
+
+/* Icon-only rows don't need the shared .menu-panel-list min-width
+   (168px) is already plenty; a touch narrower reads as a tighter,
+   more deliberate control now that there's no label text to fit. */
+.view-menu-list {
+  min-width: 176px;
+}
+
+.menu-popover-section-label {
+  padding: 10px 12px 4px;
+  font: 700 11px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.menu-popover-divider {
+  height: 1px;
+  margin: 6px 8px;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .menu-icon-btn.is-active {
@@ -1379,6 +1494,98 @@ html, body {
   margin-bottom: 4px;
 }
 
+/* "Beers logged" tile doubles as a tap target: expanding it spans
+   the full grid width (almost edge-to-edge) and grows downward to
+   reveal the user's most recent activity, without disturbing the
+   other three stat tiles which simply wrap onto the row below. */
+#profile-stat-beers {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+#profile-stat-beers:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#profile-stat-beers.is-expanded {
+  grid-column: 1 / -1;
+}
+
+.profile-activity-wrap {
+  width: 100%;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.25s ease, margin-top 0.3s ease;
+}
+
+#profile-stat-beers.is-expanded .profile-activity-wrap {
+  max-height: 260px;
+  opacity: 1;
+  margin-top: 14px;
+}
+
+.profile-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.profile-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 10px;
+}
+
+.profile-activity-item:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.profile-activity-icon {
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.profile-activity-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile-activity-title {
+  font: 600 13px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-activity-meta {
+  font: 500 11px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-activity-side {
+  flex-shrink: 0;
+  font: 700 12px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #ffdb7a;
+  font-variant-numeric: tabular-nums;
+}
+
 .profile-stat {
   display: flex;
   flex-direction: column;
@@ -1529,6 +1736,110 @@ html, body {
  *  Stats drawer — opened by tapping the giant counter. Reuses the
  *  same tile look as the profile stats, just 2x2 instead of 1x2.
  * ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ *
+ *  "Million beers" ETA card: full-width, sits above the 2x2 stat
+ *  grid. Gold-tinted so it reads as the headline number of the
+ *  drawer rather than a fifth tile in the grid below it.
+ * ------------------------------------------------------------------ */
+
+.stats-eta-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.stats-eta-card:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.stats-eta-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+  text-align: center;
+}
+
+.stats-eta-value {
+  font: 700 18px/1.25 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Graph revealed underneath when the card is tapped: collapses to
+   zero height by default, grows downward from the bottom edge of
+   the card so the date/caption above never shifts position. */
+.stats-eta-chart-wrap {
+  width: 100%;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.25s ease, margin-top 0.3s ease;
+}
+
+.stats-eta-card.is-expanded .stats-eta-chart-wrap {
+  max-height: 170px;
+  opacity: 1;
+  margin-top: 16px;
+}
+
+.stats-eta-chart {
+  width: 100%;
+  height: 150px;
+  display: block;
+  overflow: visible;
+}
+
+.stats-eta-chart-grid {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.stats-eta-chart-line {
+  stroke: #ffdb7a;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.stats-eta-chart-projection {
+  stroke: rgba(255, 219, 122, 0.55);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.stats-eta-chart-dot {
+  fill: #ffdb7a;
+}
+
+.stats-eta-chart-goal-dot {
+  fill: rgba(255, 219, 122, 0.55);
+}
+
+.stats-eta-chart-ylabel {
+  font: 500 8px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  fill: rgba(255, 255, 255, 0.4);
+}
+
+.stats-eta-chart-xlabel {
+  font: 500 8px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  fill: rgba(255, 255, 255, 0.4);
+}
+
+.stats-eta-caption {
+  font: 500 11px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: rgba(255, 255, 255, 0.55);
+}
 
 #stats-grid {
   display: flex;

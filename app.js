@@ -122,60 +122,15 @@ setTimeout(() => {
 /* ---------------------------------------------------------------- *
  *  Counter time-range control ("Timing"): lets the person scope both
  *  the giant counter and the globe's beer lights to the last 24h, the
- *  last week, or all time. An icon-only button pinned top-left (the
- *  mirror of the top-right menu button, same top offset, set in CSS);
- *  tapping it reveals a segmented pill to its right whose active
- *  segment is itself a draggable thumb — press and drag it across the
- *  pill like an iOS segmented control, or just tap a label directly.
+ *  last week, or all time. Lives as the "Time" row inside the
+ *  top-right "Layer" popover (#view-menu-list) — see createIconRow
+ *  further down, which wires up its drag/tap mechanics generically
+ *  for this row and the Map/Show rows alike.
  * ---------------------------------------------------------------- */
 
 const COUNTER_RANGE_ORDER = ["all", "week", "24h"];
 
-const counterRangePanel = document.getElementById("counter-range-panel");
-const counterRangeBtn = document.getElementById("counter-range-btn");
-const counterRangeTrack = document.getElementById("counter-range-track");
-const counterRangeThumb = document.getElementById("counter-range-thumb");
-const counterRangeSegs = Array.from(document.querySelectorAll(".counter-range-seg"));
 const beerCounterContainer = document.getElementById("beer-counter");
-
-function openCounterRangeTrack() {
-  counterRangeTrack.hidden = false;
-  requestAnimationFrame(() => {
-    counterRangeTrack.classList.add("is-open");
-  });
-  counterRangeBtn.setAttribute("aria-expanded", "true");
-  document.addEventListener("click", onDocumentClickForCounterRange, true);
-  document.addEventListener("keydown", onDocumentKeydownForCounterRange);
-}
-
-function closeCounterRangeTrack() {
-  counterRangeTrack.classList.remove("is-open");
-  counterRangeBtn.setAttribute("aria-expanded", "false");
-  document.removeEventListener("click", onDocumentClickForCounterRange, true);
-  document.removeEventListener("keydown", onDocumentKeydownForCounterRange);
-  const onTransitionEnd = () => {
-    counterRangeTrack.hidden = true;
-    counterRangeTrack.removeEventListener("transitionend", onTransitionEnd);
-  };
-  counterRangeTrack.addEventListener("transitionend", onTransitionEnd);
-}
-
-function onDocumentClickForCounterRange(e) {
-  if (counterRangeTrack.contains(e.target) || counterRangeBtn.contains(e.target)) return;
-  closeCounterRangeTrack();
-}
-
-function onDocumentKeydownForCounterRange(e) {
-  if (e.key === "Escape") closeCounterRangeTrack();
-}
-
-counterRangeBtn.addEventListener("click", () => {
-  if (counterRangeTrack.classList.contains("is-open")) {
-    closeCounterRangeTrack();
-  } else {
-    openCounterRangeTrack();
-  }
-});
 
 // Re-fetches the worldwide count scoped to `range` and animates the
 // counter from whatever it's currently showing to the new total. When
@@ -203,91 +158,12 @@ async function refreshCounterForRange(range) {
 function applyCounterRange(range) {
   if (beerCounterRemainingEl) beerCounterRemainingEl.hidden = range !== "all";
   refreshCounterForRange(range);
-  initBeerLights(range);
+  initBeerLights(range, viewScopeMode);
 }
 
-// Applies `range` as the active segment: updates state, the visual
-// selection (thumb position + label styling/aria), and re-scopes the
-// counter/globe. Shared by both the tap-a-label path and the
-// drag-and-release path below.
-function selectCounterRange(range, { animateThumb = true } = {}) {
-  const index = COUNTER_RANGE_ORDER.indexOf(range);
-  if (index === -1) return;
-
-  const changed = range !== selectedCounterRange;
-  selectedCounterRange = range;
-
-  counterRangeSegs.forEach((seg) => {
-    const selected = seg.dataset.range === range;
-    seg.classList.toggle("is-selected", selected);
-    seg.setAttribute("aria-checked", selected ? "true" : "false");
-  });
-
-  if (!animateThumb) counterRangeThumb.classList.add("is-dragging");
-  counterRangeThumb.style.transform = `translateX(${index * 100}%)`;
-  if (!animateThumb) {
-    // Force a reflow so the transform above applies instantly before
-    // transitions are re-enabled, otherwise the next real drag/snap
-    // would animate from the stale position.
-    void counterRangeThumb.offsetWidth;
-    counterRangeThumb.classList.remove("is-dragging");
-  }
-
-  if (changed) applyCounterRange(range);
-}
-
-counterRangeSegs.forEach((seg) => {
-  seg.addEventListener("click", () => {
-    selectCounterRange(seg.dataset.range);
-    closeCounterRangeTrack();
-  });
-});
-
-/* -- Dragging the active thumb directly, finger-following. -- */
-
-let counterRangeDragging = false;
-let counterRangeDragSegWidth = 0;
-let counterRangeDragTrackLeft = 0;
-let counterRangeDragX = 0;
-
-function onCounterRangeThumbPointerDown(e) {
-  if (e.pointerType === "mouse" && e.button !== 0) return;
-  counterRangeDragging = true;
-  counterRangeThumb.classList.add("is-dragging");
-  counterRangeThumb.setPointerCapture(e.pointerId);
-
-  const trackRect = counterRangeTrack.getBoundingClientRect();
-  const trackPadding = 3; // must match .counter-range-track padding
-  counterRangeDragTrackLeft = trackRect.left + trackPadding;
-  counterRangeDragSegWidth = (trackRect.width - trackPadding * 2) / COUNTER_RANGE_ORDER.length;
-  counterRangeDragX = counterRangeDragSegWidth * COUNTER_RANGE_ORDER.indexOf(selectedCounterRange);
-}
-
-function onCounterRangeThumbPointerMove(e) {
-  if (!counterRangeDragging) return;
-  const maxX = counterRangeDragSegWidth * (COUNTER_RANGE_ORDER.length - 1);
-  counterRangeDragX = Math.max(0, Math.min(maxX, e.clientX - counterRangeDragTrackLeft - counterRangeDragSegWidth / 2));
-  counterRangeThumb.style.transform = `translateX(${counterRangeDragX}px)`;
-}
-
-function onCounterRangeThumbPointerUp() {
-  if (!counterRangeDragging) return;
-  counterRangeDragging = false;
-  counterRangeThumb.classList.remove("is-dragging");
-
-  const index = Math.round(counterRangeDragX / counterRangeDragSegWidth);
-  const range = COUNTER_RANGE_ORDER[Math.max(0, Math.min(COUNTER_RANGE_ORDER.length - 1, index))];
-  selectCounterRange(range);
-  // Let the snap-into-place animation (see .counter-range-thumb's
-  // transition) actually play before the track closes, same as
-  // tapping a label does immediately.
-  setTimeout(closeCounterRangeTrack, 280);
-}
-
-counterRangeThumb.addEventListener("pointerdown", onCounterRangeThumbPointerDown);
-counterRangeThumb.addEventListener("pointermove", onCounterRangeThumbPointerMove);
-counterRangeThumb.addEventListener("pointerup", onCounterRangeThumbPointerUp);
-counterRangeThumb.addEventListener("pointercancel", onCounterRangeThumbPointerUp);
+// The Time row's selection/drag mechanics are wired up generically by
+// createIconRow, alongside the Map and Show rows — see
+// "View menu: the top-right 'Layer' popover" further down.
 
 /* ---------------------------------------------------------------- *
  *  Supabase: gives every visitor a persistent (anonymous) identity,
@@ -322,6 +198,7 @@ async function initSupabaseUser() {
     }
 
     await loadProfile();
+    await loadCurrentLeagueMembership();
   } catch (err) {
     // Most likely cause: Anonymous Sign-Ins isn't enabled for this
     // Supabase project yet (Authentication -> Providers -> Anonymous).
@@ -366,15 +243,24 @@ async function refreshBeerCounterFromServer() {
 
 initSupabaseUser();
 
-const satelliteTogglePanel = document.getElementById("satellite-toggle-panel");
-const satelliteToggleBtn = document.getElementById("satellite-toggle-btn");
+const viewMenuPanel = document.getElementById("view-menu-panel");
+const viewMenuBtn = document.getElementById("view-menu-btn");
+const viewMenuBtnIcon = document.getElementById("view-menu-btn-icon");
+const viewMenuList = document.getElementById("view-menu-list");
 
 // Populated inside style.load below with every fill/background layer id
 // from the base vector style — exactly the layers that need hiding when
-// satellite view is on, since otherwise they'd paint over the imagery.
+// satellite view (or the country-coverage view further down) is on,
+// since otherwise they'd paint over it.
 const baseFillLayerIds = [];
 const baseBackgroundLayerIds = [];
 let satelliteEnabled = false;
+// Set inside style.load, reused later to insert the country-coverage
+// layers (see ensureMainMapCountriesLayer) at the same spot as the
+// satellite layer, so line/border layers stay drawn on top of both.
+let firstVectorLineLayerId = undefined;
+let viewBasemapMode = "satellite"; // "satellite" | "my-country" | "missing-countries"
+let viewScopeMode = "everybody"; // "everybody" | "league" | "me"
 
 const map = new maplibregl.Map({
   container: "map",
@@ -429,9 +315,10 @@ map.on("style.load", () => {
   // underneath the vector style's line/border layers so those still
   // show through as a hybrid look when satellite is toggled on.
   // Starts hidden; setSatelliteView below flips it (and the base
-  // fill/background layers it needs to hide) on tap of the top-right
-  // toggle button.
+  // fill/background layers it needs to hide) once the mode is applied
+  // just below.
   const firstLineLayer = map.getStyle().layers.find((layer) => layer.type === "line");
+  firstVectorLineLayerId = firstLineLayer ? firstLineLayer.id : undefined;
   map.addSource("satellite", {
     type: "raster",
     tiles: ["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg"],
@@ -445,9 +332,10 @@ map.on("style.load", () => {
       source: "satellite",
       layout: { visibility: "none" },
     },
-    firstLineLayer ? firstLineLayer.id : undefined
+    firstVectorLineLayerId
   );
-  satelliteToggleBtn.disabled = false;
+  viewMenuBtn.disabled = false;
+  setViewBasemapMode("satellite"); // satellite is the default view
 
   // Atmosphere/sky. Note: MapLibre v5+ removed the old setFog() API —
   // fog properties now live inside setSky() instead.
@@ -469,7 +357,7 @@ map.on("style.load", () => {
   map.setLight({ anchor: "viewport", color: "#ffffff", intensity: 0 });
 
   try {
-    initBeerLights();
+    initBeerLights("all", viewScopeMode);
     map.on("move", updateBeerLightFade);
   } catch (err) {
     console.error("Beer lights setup failed:", err);
@@ -492,11 +380,32 @@ map.on("style.load", () => {
 });
 
 /* ---------------------------------------------------------------- *
- *  Satellite view toggle: swaps the vector fill/background layers for
- *  the raster imagery layer added above, keeping line/border layers
- *  on top for a hybrid look. No map.setStyle() involved, so none of
+ *  View menu: the top-right button beneath the main menu, opened
+ *  with a "Layer" icon, reveals a small popover (same frosted-glass
+ *  look as the main one) with three independent, icon-only rows —
+ *  see createIconRow below for the shared drag/tap mechanics.
+ *
+ *  Map (mutually exclusive):
+ *    - Satellite: the EOX raster layer added above (default)
+ *    - My country only: every country this user has logged a beer in,
+ *      highlighted gold on an otherwise dim world (same idea as the
+ *      profile drawer's mini map, reused here on the interactive globe)
+ *    - Countries I don't have: the inverse — gold is what's missing
+ *
+ *  Show (mutually exclusive, filters which beer lights render):
+ *    - Everybody counts: every logged beer, worldwide (default)
+ *    - My league only: currentLeague's member ids (see the League
+ *      card in the profile drawer for join/create) — empty globe if
+ *      the user isn't in one
+ *    - Me only: just this signed-in user's own beers
+ *
+ *  Time (mutually exclusive, scopes the counter + beer lights):
+ *    - All time (default) / Week / 24h
+ *
+ *  None of the Map/Show choices ever call map.setStyle(), so none of
  *  the globe/sky/light/beer-lights setup above needs to be redone —
- *  this only ever flips layer visibility on the style already loaded.
+ *  this only flips layer visibility (and beer-light query filters) on
+ *  the style already loaded.
  * ---------------------------------------------------------------- */
 
 function setSatelliteView(enabled) {
@@ -505,11 +414,293 @@ function setSatelliteView(enabled) {
   const vectorVisibility = enabled ? "none" : "visible";
   baseFillLayerIds.forEach((id) => map.setLayoutProperty(id, "visibility", vectorVisibility));
   baseBackgroundLayerIds.forEach((id) => map.setLayoutProperty(id, "visibility", vectorVisibility));
-  satelliteToggleBtn.classList.toggle("is-active", enabled);
-  satelliteToggleBtn.setAttribute("aria-pressed", String(enabled));
 }
 
-satelliteToggleBtn.addEventListener("click", () => setSatelliteView(!satelliteEnabled));
+// Mirrors the profile drawer's mini map: default-fill (dim) countries
+// with a gold "match" expression for whichever ISO_A2 set applies.
+// invert=true swaps which side of the set gets the gold treatment,
+// used for "Countries I don't have".
+function buildCountryFillExpression(visitedIso2, invert) {
+  const visitedColor = invert ? PROFILE_MAP_DEFAULT_FILL : PROFILE_MAP_GOLD;
+  const defaultColor = invert ? PROFILE_MAP_GOLD : PROFILE_MAP_DEFAULT_FILL;
+  if (!visitedIso2 || !visitedIso2.size) return defaultColor;
+  const expr = ["match", ["get", "ISO_A2"]];
+  visitedIso2.forEach((code) => expr.push(code, visitedColor));
+  expr.push(defaultColor);
+  return expr;
+}
+
+// Lazily adds the "countries" source + fill/line layers to the globe
+// (reusing profileMapGeojson if the profile drawer already fetched
+// it), inserted at the same spot as the satellite layer so the vector
+// style's own line/border layers stay drawn on top of both. Cached in
+// a promise so repeat mode switches don't re-add or re-fetch.
+let mainMapCountriesLayerPromise = null;
+function ensureMainMapCountriesLayer() {
+  if (mainMapCountriesLayerPromise) return mainMapCountriesLayerPromise;
+  mainMapCountriesLayerPromise = (async () => {
+    if (!profileMapGeojson) {
+      const res = await fetch(WORLD_COUNTRIES_GEOJSON_URL);
+      if (!res.ok) throw new Error(`Failed to load world map (${res.status})`);
+      profileMapGeojson = await res.json();
+    }
+    if (!map.getSource("countries")) {
+      map.addSource("countries", { type: "geojson", data: profileMapGeojson });
+    }
+    if (!map.getLayer("countries-fill")) {
+      map.addLayer(
+        {
+          id: "countries-fill",
+          type: "fill",
+          source: "countries",
+          layout: { visibility: "none" },
+          paint: { "fill-color": PROFILE_MAP_DEFAULT_FILL },
+        },
+        firstVectorLineLayerId
+      );
+    }
+    if (!map.getLayer("countries-line")) {
+      map.addLayer(
+        {
+          id: "countries-line",
+          type: "line",
+          source: "countries",
+          layout: { visibility: "none" },
+          paint: { "line-color": PROFILE_MAP_LINE_COLOR, "line-width": 0.5 },
+        },
+        firstVectorLineLayerId
+      );
+    }
+  })();
+  return mainMapCountriesLayerPromise;
+}
+
+// This user's visited-country ISO2 codes, cached for the session once
+// resolved — kept separate from the profile drawer's own copy (which
+// intentionally re-resolves fresh every time that drawer opens) since
+// re-running the reverse-geocode pass on every map-mode switch here
+// would be wasteful.
+let mainMapVisitedIso2 = new Set();
+let mainMapVisitedPromise = null;
+function ensureMainMapVisitedCountries() {
+  if (!mainMapVisitedPromise) {
+    mainMapVisitedPromise = loadProfileMapVisitedCountries()
+      .then((set) => {
+        mainMapVisitedIso2 = set;
+        return set;
+      })
+      .catch((err) => {
+        console.error("Failed to load visited countries for globe view:", err);
+        mainMapVisitedPromise = null;
+        return new Set();
+      });
+  }
+  return mainMapVisitedPromise;
+}
+
+// The layer button's own icon switches to the filled/solid glyph
+// whenever any of the three rows sits away from its default (Map:
+// satellite, Show: everybody, Time: all time) — a quick "something's
+// customized in here" signal on the closed button, before the person
+// even opens the popover to see which row it is.
+function updateViewMenuBtnFillState() {
+  const isCustomized = viewBasemapMode !== "satellite" || viewScopeMode !== "everybody" || selectedCounterRange !== "all";
+  if (viewMenuBtnIcon) viewMenuBtnIcon.classList.toggle("is-filled", isCustomized);
+}
+
+async function setViewBasemapMode(mode) {
+  viewBasemapMode = mode;
+  updateViewMenuBtnFillState();
+  setSatelliteView(mode === "satellite");
+
+  const showCountries = mode === "my-country" || mode === "missing-countries";
+  if (!showCountries) {
+    if (map.getLayer("countries-fill")) {
+      map.setLayoutProperty("countries-fill", "visibility", "none");
+      map.setLayoutProperty("countries-line", "visibility", "none");
+    }
+    return;
+  }
+
+  try {
+    await ensureMainMapCountriesLayer();
+    const visited = await ensureMainMapVisitedCountries();
+    // Bail if the menu moved on to a different mode while this was
+    // resolving, so a slow geocode pass can't clobber a later choice.
+    if (viewBasemapMode !== mode) return;
+    map.setPaintProperty("countries-fill", "fill-color", buildCountryFillExpression(visited, mode === "missing-countries"));
+    map.setLayoutProperty("countries-fill", "visibility", "visible");
+    map.setLayoutProperty("countries-line", "visibility", "visible");
+  } catch (err) {
+    console.error("Failed to show country coverage on the globe:", err);
+  }
+}
+
+function setViewScopeMode(scope) {
+  viewScopeMode = scope;
+  updateViewMenuBtnFillState();
+  initBeerLights(selectedCounterRange, scope);
+}
+
+function openViewMenu() {
+  viewMenuList.hidden = false;
+  requestAnimationFrame(() => {
+    viewMenuList.classList.add("is-open");
+  });
+  viewMenuBtn.setAttribute("aria-expanded", "true");
+  document.addEventListener("click", onDocumentClickForViewMenu, true);
+  document.addEventListener("keydown", onDocumentKeydownForViewMenu);
+}
+
+function closeViewMenu() {
+  viewMenuList.classList.remove("is-open");
+  viewMenuBtn.setAttribute("aria-expanded", "false");
+  document.removeEventListener("click", onDocumentClickForViewMenu, true);
+  document.removeEventListener("keydown", onDocumentKeydownForViewMenu);
+  const onTransitionEnd = () => {
+    viewMenuList.hidden = true;
+    viewMenuList.removeEventListener("transitionend", onTransitionEnd);
+  };
+  viewMenuList.addEventListener("transitionend", onTransitionEnd);
+}
+
+function onDocumentClickForViewMenu(e) {
+  if (viewMenuList.contains(e.target) || viewMenuBtn.contains(e.target)) return;
+  closeViewMenu();
+}
+
+function onDocumentKeydownForViewMenu(e) {
+  if (e.key === "Escape") closeViewMenu();
+}
+
+viewMenuBtn.addEventListener("click", () => {
+  if (viewMenuList.classList.contains("is-open")) {
+    closeViewMenu();
+  } else {
+    openViewMenu();
+  }
+});
+
+/* ---------------------------------------------------------------- *
+ *  Generic draggable icon row: powers every section inside the
+ *  "Layer" popover above (Map / Show / Time). Each row is a small
+ *  horizontal segmented control, icon-only, with a solid pill under
+ *  whichever icon is active. Tap an icon to select it directly, or
+ *  press-and-drag the pill itself — it follows your finger across the
+ *  row and snaps to the nearest icon on release, same mechanics the
+ *  old standalone Time control used, now shared across all three
+ *  rows. Unlike the old per-control popovers, selecting an option
+ *  here does NOT close the popover, since the three rows are
+ *  independent choices someone may want to adjust one after another.
+ * ---------------------------------------------------------------- */
+function createIconRow({ row, thumb, order, datasetKey, initial, onSelect }) {
+  const items = Array.from(row.querySelectorAll(".popover-icon-row-item"));
+  let selected = initial;
+  let dragging = false;
+  let dragItemWidth = 0;
+  let dragTrackLeft = 0;
+  let dragX = 0;
+
+  function applySelection(value, { animate = true } = {}) {
+    const index = order.indexOf(value);
+    if (index === -1) return;
+    selected = value;
+    items.forEach((item) => {
+      const isActive = item.dataset[datasetKey] === value;
+      item.classList.toggle("is-active", isActive);
+      item.setAttribute("aria-checked", String(isActive));
+    });
+    if (!animate) thumb.classList.add("is-dragging");
+    thumb.style.transform = `translateX(${index * 100}%)`;
+    if (!animate) {
+      // Force a reflow so the transform above applies instantly
+      // before transitions are re-enabled, otherwise the next real
+      // drag/snap would animate from the stale position.
+      void thumb.offsetWidth;
+      thumb.classList.remove("is-dragging");
+    }
+  }
+
+  function selectAndNotify(value) {
+    const changed = value !== selected;
+    applySelection(value);
+    if (changed) onSelect(value);
+  }
+
+  items.forEach((item) => {
+    item.addEventListener("click", () => selectAndNotify(item.dataset[datasetKey]));
+  });
+
+  function onPointerDown(e) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    dragging = true;
+    thumb.classList.add("is-dragging");
+    thumb.setPointerCapture(e.pointerId);
+    const trackRect = row.getBoundingClientRect();
+    const trackPadding = 3; // must match .popover-icon-row padding
+    dragTrackLeft = trackRect.left + trackPadding;
+    dragItemWidth = (trackRect.width - trackPadding * 2) / order.length;
+    dragX = dragItemWidth * order.indexOf(selected);
+  }
+
+  function onPointerMove(e) {
+    if (!dragging) return;
+    const maxX = dragItemWidth * (order.length - 1);
+    dragX = Math.max(0, Math.min(maxX, e.clientX - dragTrackLeft - dragItemWidth / 2));
+    thumb.style.transform = `translateX(${dragX}px)`;
+  }
+
+  function onPointerUp() {
+    if (!dragging) return;
+    dragging = false;
+    thumb.classList.remove("is-dragging");
+    const index = Math.round(dragX / dragItemWidth);
+    const value = order[Math.max(0, Math.min(order.length - 1, index))];
+    selectAndNotify(value);
+  }
+
+  thumb.addEventListener("pointerdown", onPointerDown);
+  thumb.addEventListener("pointermove", onPointerMove);
+  thumb.addEventListener("pointerup", onPointerUp);
+  thumb.addEventListener("pointercancel", onPointerUp);
+
+  // Snap the thumb to its initial position with no transition, so it
+  // doesn't animate in from the left on first paint.
+  applySelection(initial, { animate: false });
+
+  return { select: selectAndNotify };
+}
+
+createIconRow({
+  row: document.getElementById("view-mode-row"),
+  thumb: document.getElementById("view-mode-thumb"),
+  order: ["satellite", "my-country", "missing-countries"],
+  datasetKey: "viewMode",
+  initial: viewBasemapMode,
+  onSelect: setViewBasemapMode,
+});
+
+createIconRow({
+  row: document.getElementById("view-scope-row"),
+  thumb: document.getElementById("view-scope-thumb"),
+  order: ["everybody", "league", "me"],
+  datasetKey: "viewScope",
+  initial: viewScopeMode,
+  onSelect: setViewScopeMode,
+});
+
+createIconRow({
+  row: document.getElementById("counter-range-row"),
+  thumb: document.getElementById("counter-range-thumb"),
+  order: COUNTER_RANGE_ORDER,
+  datasetKey: "range",
+  initial: selectedCounterRange,
+  onSelect: (range) => {
+    selectedCounterRange = range;
+    updateViewMenuBtnFillState();
+    applyCounterRange(range);
+  },
+});
 
 /* ---------------------------------------------------------------- *
  *  Starfield: tracks the globe's rotation so the sky behind it isn't
@@ -647,8 +838,12 @@ function createBeerLightMarker(lat, lng) {
 // beer_entries) — falling back to this device's own localStorage
 // cache if the server is unreachable. Re-runnable: called again by
 // the counter time-range dropdown to rescope which lights are shown,
-// clearing out whatever's currently on the globe first.
-async function initBeerLights(range = "all") {
+// clearing out whatever's currently on the globe first. `who` is the
+// view menu's "Show" selection — "me" filters to just this user's own
+// entries; "league" filters to currentLeague's member ids (empty globe
+// if the user isn't in a league — see the profile drawer's League
+// card for join/create).
+async function initBeerLights(range = "all", who = viewScopeMode) {
   beerLights.forEach((light) => light.marker.remove());
   beerLights = [];
 
@@ -661,14 +856,33 @@ async function initBeerLights(range = "all") {
       .not("bar_lng", "is", null);
     const cutoffIso = leaderboardRangeCutoffIso(range);
     if (cutoffIso) query = query.gte("created_at", cutoffIso);
+    if (who === "me" && currentUser) {
+      query = query.eq("user_id", currentUser.id);
+    } else if (who === "league") {
+      if (!currentLeague) {
+        // Not in a league — nothing to scope to yet. Left empty rather
+        // than silently falling back to "everybody", since selecting
+        // this and seeing the full globe would be misleading.
+        beerLights = [];
+        updateBeerLightFade();
+        return;
+      }
+      const memberIds = Array.from(await ensureLeagueMemberIds());
+      if (!memberIds.length) {
+        beerLights = [];
+        updateBeerLightFade();
+        return;
+      }
+      query = query.in("user_id", memberIds);
+    }
     const { data, error } = await query;
     if (error) throw error;
     locations = (data || []).map((row) => ({ lat: row.bar_lat, lng: row.bar_lng }));
   } catch (err) {
     console.error("Failed to load shared beer lights, falling back to local cache:", err);
-    // The local cache has no timestamps to filter by, so it only makes
-    // sense as a fallback for the all-time view.
-    locations = range === "all" ? getStoredBeerLightLocations() : [];
+    // The local cache has no timestamps or user ids to filter by, so
+    // it only makes sense as a fallback for the all-time/everybody view.
+    locations = range === "all" && who !== "league" ? getStoredBeerLightLocations() : [];
   }
 
   beerLights = locations.map(({ lat, lng }) => createBeerLightMarker(lat, lng));
@@ -1768,6 +1982,11 @@ async function saveBeerEntryInBackground(entry) {
     });
     if (error) throw error;
     loadProfileStats();
+    profileActivityLoaded = false;
+    if (profileStatBeersEl && profileStatBeersEl.classList.contains("is-expanded")) {
+      profileActivityLoaded = true;
+      loadProfileActivity();
+    }
   } catch (err) {
     console.error("Failed to save beer entry to the server:", err);
   }
@@ -2020,16 +2239,30 @@ const profileStatCountEl = document.getElementById("profile-stat-count");
 const profileStatSinceEl = document.getElementById("profile-stat-since");
 const profileStatSpendEl = document.getElementById("profile-stat-spend");
 const profileStatLitresEl = document.getElementById("profile-stat-litres");
+const profileStatBeersEl = document.getElementById("profile-stat-beers");
+const profileActivityListEl = document.getElementById("profile-activity-list");
+const profileActivityEmptyEl = document.getElementById("profile-activity-empty");
+const profileActivityStatusEl = document.getElementById("profile-activity-status");
 const profileFavoriteEl = document.getElementById("profile-favorite");
 const profileStatusEl = document.getElementById("profile-status");
+const profileLeagueNoneEl = document.getElementById("profile-league-none");
+const profileLeagueActiveEl = document.getElementById("profile-league-active");
+const profileLeagueCodeInput = document.getElementById("profile-league-code-input");
+const profileLeagueJoinBtn = document.getElementById("profile-league-join-btn");
+const profileLeagueCreateBtn = document.getElementById("profile-league-create-btn");
+const profileLeagueNameEl = document.getElementById("profile-league-name");
+const profileLeagueCountEl = document.getElementById("profile-league-count");
+const profileLeagueInviteCodeEl = document.getElementById("profile-league-invite-code");
+const profileLeagueCopyBtn = document.getElementById("profile-league-copy-btn");
+const profileLeagueLeaveBtn = document.getElementById("profile-league-leave-btn");
+const profileLeagueStatusEl = document.getElementById("profile-league-status");
 
-// Hides the top-left schedule/time-range button, and the top-right
-// satellite toggle, while a drawer opened from the menu popover
-// (Profil, Stats, Battlefield) is open — "Add my beer" isn't reached
-// from that popover, so it's left alone.
+// Hides the top-right "Layer" popover button (Map/Show/Time) while a
+// drawer opened from the menu popover (Profil, Stats, Battlefield) is
+// open — "Add my beer" isn't reached from that popover, so it's left
+// alone.
 function setScheduleButtonVisible(visible) {
-  if (counterRangePanel) counterRangePanel.classList.toggle("is-hidden", !visible);
-  if (satelliteTogglePanel) satelliteTogglePanel.classList.toggle("is-hidden", !visible);
+  if (viewMenuPanel) viewMenuPanel.classList.toggle("is-hidden", !visible);
 }
 
 
@@ -2045,9 +2278,14 @@ function openProfileSheet() {
     });
   });
 
+  if (profileStatBeersEl) {
+    profileStatBeersEl.classList.remove("is-expanded");
+    profileStatBeersEl.setAttribute("aria-expanded", "false");
+  }
   renderProfile();
   loadProfileStats();
   refreshProfileMapCoverage();
+  renderProfileLeague();
 }
 
 function closeProfileSheet() {
@@ -2255,6 +2493,349 @@ async function loadProfileStats() {
     profileStatSpendEl.textContent = "–";
     profileStatLitresEl.textContent = "–";
   }
+}
+
+/* ---------------------------------------------------------------- *
+ *  Recent activity: tapping the "Beers logged" tile expands it to
+ *  almost full width and reveals the user's own log, most recent
+ *  first. Only about 5 rows fit in the revealed space at once — the
+ *  list itself scrolls internally for anything beyond that, rather
+ *  than paging.
+ * ---------------------------------------------------------------- */
+
+const PROFILE_ACTIVITY_FETCH_LIMIT = 30; // plenty to fill the scrollable list
+let profileActivityLoaded = false; // re-fetched next time the drawer opens, not on every tap
+
+function toggleProfileActivity() {
+  if (!profileStatBeersEl) return;
+  const expanded = profileStatBeersEl.classList.toggle("is-expanded");
+  profileStatBeersEl.setAttribute("aria-expanded", expanded ? "true" : "false");
+  if (expanded && !profileActivityLoaded) {
+    profileActivityLoaded = true;
+    loadProfileActivity();
+  }
+}
+
+if (profileStatBeersEl) {
+  profileStatBeersEl.addEventListener("click", toggleProfileActivity);
+  profileStatBeersEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleProfileActivity();
+    }
+  });
+}
+
+// Short, friendly "how long ago" label — same rough tiers used for
+// the ETA card's duration text, just phrased as elapsed instead of
+// remaining time.
+function formatActivityTimeAgo(dateStr) {
+  const then = new Date(dateStr).getTime();
+  if (Number.isNaN(then)) return "";
+  const minutes = Math.max(0, (Date.now() - then) / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${Math.round(minutes)}m ago`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${Math.round(hours)}h ago`;
+  const days = hours / 24;
+  if (days < 7) return `${Math.round(days)}d ago`;
+  return new Date(then).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+async function loadProfileActivity() {
+  if (!currentUser || !profileActivityListEl) return;
+
+  profileActivityListEl.innerHTML = "";
+  profileActivityEmptyEl.hidden = true;
+  profileActivityStatusEl.hidden = false;
+  profileActivityStatusEl.classList.remove("field-hint-error");
+  profileActivityStatusEl.textContent = "Loading…";
+
+  try {
+    const { data, error } = await supabaseClient
+      .from("beer_entries")
+      .select("beer_name, bar_name, price, rating, created_at")
+      .eq("user_id", currentUser.id)
+      .order("created_at", { ascending: false })
+      .limit(PROFILE_ACTIVITY_FETCH_LIMIT);
+    if (error) throw error;
+
+    const rows = data || [];
+    profileActivityStatusEl.hidden = true;
+
+    if (!rows.length) {
+      profileActivityEmptyEl.hidden = false;
+      return;
+    }
+
+    profileActivityListEl.innerHTML = "";
+    rows.forEach((row) => {
+      const li = document.createElement("li");
+      li.className = "profile-activity-item";
+
+      const icon = document.createElement("span");
+      icon.className = "profile-activity-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = "🍺";
+
+      const main = document.createElement("div");
+      main.className = "profile-activity-main";
+
+      const title = document.createElement("span");
+      title.className = "profile-activity-title";
+      title.textContent = row.beer_name || "Beer";
+
+      const meta = document.createElement("span");
+      meta.className = "profile-activity-meta";
+      meta.textContent = [row.bar_name, formatActivityTimeAgo(row.created_at)].filter(Boolean).join(" · ");
+
+      main.append(title, meta);
+
+      const side = document.createElement("span");
+      side.className = "profile-activity-side";
+      side.textContent =
+        typeof row.rating === "number" && row.rating > 0
+          ? `${row.rating.toFixed(1)} ★`
+          : typeof row.price === "number"
+          ? `$${row.price.toFixed(2)}`
+          : "";
+
+      li.append(icon, main, side);
+      profileActivityListEl.appendChild(li);
+    });
+  } catch (err) {
+    console.error("Failed to load profile activity:", err);
+    profileActivityStatusEl.hidden = false;
+    profileActivityStatusEl.classList.add("field-hint-error");
+    profileActivityStatusEl.textContent = "Couldn't load activity — try again.";
+  }
+}
+
+/* ---------------------------------------------------------------- *
+ *  League: a group the user is a member of — at most one at a time
+ *  (joining/creating another replaces it; enforced here in app logic,
+ *  not by the schema). Backs "My league only" in the globe's view
+ *  menu. Membership is looked up fresh every time the profile drawer
+ *  opens, same as the rest of the profile stats above.
+ * ---------------------------------------------------------------- */
+
+// currentLeague is read by ensureLeagueMemberIds() (used by the globe's
+// beer-lights filter) as well as by the profile card here.
+let currentLeague = null; // { id, name, invite_code } | null
+let leagueMemberIdsPromise = null; // cache, invalidated on join/create/leave
+
+function showProfileLeagueStatus(message, isError) {
+  profileLeagueStatusEl.hidden = false;
+  profileLeagueStatusEl.textContent = message;
+  profileLeagueStatusEl.classList.toggle("field-hint-error", Boolean(isError));
+}
+
+function clearProfileLeagueStatus() {
+  profileLeagueStatusEl.hidden = true;
+  profileLeagueStatusEl.classList.remove("field-hint-error");
+}
+
+// 6 unambiguous uppercase letters/digits (no 0/O/1/I) — short enough
+// to read out loud or type from memory.
+const LEAGUE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function generateLeagueInviteCode() {
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code += LEAGUE_CODE_ALPHABET[Math.floor(Math.random() * LEAGUE_CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+// Renders whichever of the two inner blocks matches currentLeague, and
+// fills in the member count once currentLeague is set.
+async function renderProfileLeagueCard() {
+  const inLeague = Boolean(currentLeague);
+  profileLeagueNoneEl.hidden = inLeague;
+  profileLeagueActiveEl.hidden = !inLeague;
+  if (!inLeague) return;
+
+  profileLeagueNameEl.textContent = currentLeague.name;
+  profileLeagueInviteCodeEl.textContent = currentLeague.invite_code;
+  profileLeagueCountEl.textContent = "–";
+  try {
+    const { count, error } = await supabaseClient
+      .from("league_members")
+      .select("user_id", { count: "exact", head: true })
+      .eq("league_id", currentLeague.id);
+    if (error) throw error;
+    profileLeagueCountEl.textContent = `${count || 0} member${count === 1 ? "" : "s"}`;
+  } catch (err) {
+    console.error("Failed to load league member count:", err);
+    profileLeagueCountEl.textContent = "";
+  }
+}
+
+// Resolves currentLeague from this user's membership row, if any —
+// called once at startup (so the globe's "My league only" filter works
+// without ever opening the profile drawer) and again every time that
+// drawer opens (in case membership changed elsewhere/another device).
+async function loadCurrentLeagueMembership() {
+  if (!currentUser) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from("league_members")
+      .select("leagues(id, name, invite_code)")
+      .eq("user_id", currentUser.id)
+      .maybeSingle();
+    if (error) throw error;
+    currentLeague = data && data.leagues ? data.leagues : null;
+  } catch (err) {
+    console.error("Failed to load league membership:", err);
+    currentLeague = null;
+  }
+}
+
+// Called every time the profile drawer opens.
+async function renderProfileLeague() {
+  if (!currentUser) return;
+  clearProfileLeagueStatus();
+  await loadCurrentLeagueMembership();
+  renderProfileLeagueCard();
+}
+
+// Shared by both Join and Create: at most one league per user, so any
+// existing membership row is cleared first.
+async function replaceLeagueMembership(leagueId) {
+  await supabaseClient.from("league_members").delete().eq("user_id", currentUser.id);
+  const { error } = await supabaseClient.from("league_members").insert({ league_id: leagueId, user_id: currentUser.id });
+  if (error) throw error;
+  leagueMemberIdsPromise = null;
+}
+
+async function joinLeagueByCode(rawCode) {
+  const code = rawCode.trim().toUpperCase();
+  if (!code) return;
+  if (!currentUser) {
+    showProfileLeagueStatus("Sign-in still loading — try again in a moment.", true);
+    return;
+  }
+  showProfileLeagueStatus("Joining…", false);
+  try {
+    const { data: league, error: findError } = await supabaseClient
+      .from("leagues")
+      .select("id, name, invite_code")
+      .eq("invite_code", code)
+      .maybeSingle();
+    if (findError) throw findError;
+    if (!league) {
+      showProfileLeagueStatus("No league with that code.", true);
+      return;
+    }
+    await replaceLeagueMembership(league.id);
+    currentLeague = league;
+    profileLeagueCodeInput.value = "";
+    clearProfileLeagueStatus();
+    renderProfileLeagueCard();
+    // If "My league only" is the active Show scope, the globe's lights
+    // should reflect the new membership right away.
+    if (viewScopeMode === "league") initBeerLights(selectedCounterRange, "league");
+  } catch (err) {
+    console.error("Failed to join league:", err);
+    showProfileLeagueStatus("Couldn't join that league — try again.", true);
+  }
+}
+
+async function createLeague() {
+  if (!currentUser) {
+    showProfileLeagueStatus("Sign-in still loading — try again in a moment.", true);
+    return;
+  }
+  const name = (window.prompt("Name your league") || "").trim();
+  if (!name) return;
+  showProfileLeagueStatus("Creating…", false);
+  try {
+    // Invite codes are unique; a collision is astronomically unlikely
+    // at 33^6 combinations, but retried a couple of times just in case.
+    let league = null;
+    for (let attempt = 0; attempt < 3 && !league; attempt++) {
+      const invite_code = generateLeagueInviteCode();
+      const { data, error } = await supabaseClient
+        .from("leagues")
+        .insert({ name, invite_code, created_by: currentUser.id })
+        .select("id, name, invite_code")
+        .single();
+      if (error) {
+        if (error.code === "23505") continue; // invite_code collision — retry
+        throw error;
+      }
+      league = data;
+    }
+    if (!league) throw new Error("Could not generate a unique invite code");
+
+    await replaceLeagueMembership(league.id);
+    currentLeague = league;
+    clearProfileLeagueStatus();
+    renderProfileLeagueCard();
+    if (viewScopeMode === "league") initBeerLights(selectedCounterRange, "league");
+  } catch (err) {
+    console.error("Failed to create league:", err);
+    showProfileLeagueStatus("Couldn't create a league — try again.", true);
+  }
+}
+
+async function leaveLeague() {
+  if (!currentUser || !currentLeague) return;
+  showProfileLeagueStatus("Leaving…", false);
+  try {
+    const { error } = await supabaseClient
+      .from("league_members")
+      .delete()
+      .eq("league_id", currentLeague.id)
+      .eq("user_id", currentUser.id);
+    if (error) throw error;
+    currentLeague = null;
+    leagueMemberIdsPromise = null;
+    clearProfileLeagueStatus();
+    renderProfileLeagueCard();
+    if (viewScopeMode === "league") initBeerLights(selectedCounterRange, "league");
+  } catch (err) {
+    console.error("Failed to leave league:", err);
+    showProfileLeagueStatus("Couldn't leave that league — try again.", true);
+  }
+}
+
+profileLeagueJoinBtn.addEventListener("click", () => joinLeagueByCode(profileLeagueCodeInput.value));
+profileLeagueCodeInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") joinLeagueByCode(profileLeagueCodeInput.value);
+});
+profileLeagueCreateBtn.addEventListener("click", createLeague);
+profileLeagueLeaveBtn.addEventListener("click", leaveLeague);
+profileLeagueCopyBtn.addEventListener("click", async () => {
+  if (!currentLeague) return;
+  try {
+    await navigator.clipboard.writeText(currentLeague.invite_code);
+    showProfileLeagueStatus("Code copied", false);
+    setTimeout(clearProfileLeagueStatus, 1200);
+  } catch (err) {
+    console.error("Failed to copy invite code:", err);
+  }
+});
+
+// Resolves currentLeague's member ids for the globe's "My league only"
+// beer-lights filter, cached until join/create/leave invalidates it.
+async function ensureLeagueMemberIds() {
+  if (!currentLeague) return new Set();
+  if (!leagueMemberIdsPromise) {
+    leagueMemberIdsPromise = supabaseClient
+      .from("league_members")
+      .select("user_id")
+      .eq("league_id", currentLeague.id)
+      .then(({ data, error }) => {
+        if (error) throw error;
+        return new Set((data || []).map((row) => row.user_id));
+      })
+      .catch((err) => {
+        console.error("Failed to load league members:", err);
+        leagueMemberIdsPromise = null;
+        return new Set();
+      });
+  }
+  return leagueMemberIdsPromise;
 }
 
 async function saveProfileField(patch) {
@@ -2556,6 +3137,8 @@ async function refreshProfileMapCoverage() {
 
 const statsSheetBackdrop = document.getElementById("stats-sheet-backdrop");
 const statsSheet = document.getElementById("stats-sheet");
+const statsEtaValueEl = document.getElementById("stats-eta-value");
+const statsEtaCaptionEl = document.getElementById("stats-eta-caption");
 const statsTotalEl = document.getElementById("stats-total-value");
 const statsTodayEl = document.getElementById("stats-today-value");
 const statsRatingEl = document.getElementById("stats-rating-value");
@@ -2583,6 +3166,10 @@ function openStatsSheet() {
     });
   });
 
+  if (statsEtaCardEl) {
+    statsEtaCardEl.classList.remove("is-expanded");
+    statsEtaCardEl.setAttribute("aria-expanded", "false");
+  }
   loadWorldStats();
   loadLeaderboard();
 }
@@ -2612,12 +3199,234 @@ document.getElementById("stats-back-btn").addEventListener("click", () => {
 // Fetches every entry's lightweight fields and tallies them client-side
 // — simplest approach while the table stays small; swap for a Postgres
 // view/RPC (avg, count, group by) if the table grows large.
+
+// Turns an hours-from-now duration into a short, human "in about …"
+// phrase for the ETA card's caption line.
+function formatEtaDuration(hours) {
+  const days = hours / 24;
+  if (days < 1) return "less than a day";
+  if (days < 60) {
+    const n = Math.round(days);
+    return `about ${n} day${n === 1 ? "" : "s"}`;
+  }
+  const months = days / 30.44;
+  if (months < 24) {
+    const n = Math.round(months);
+    return `about ${n} month${n === 1 ? "" : "s"}`;
+  }
+  const years = days / 365.25;
+  const n = years < 10 ? Math.round(years * 10) / 10 : Math.round(years);
+  return `about ${n} year${n === 1 ? "" : "s"}`;
+}
+
+// Persists the last successfully computed ETA (value + caption text)
+// across reloads/sessions, so a quiet stretch with no last-24h
+// activity — pace would divide by zero — can still show the most
+// recent real estimate instead of a "not enough data" placeholder.
+const STATS_ETA_STORAGE_KEY = "statsEtaLastEstimate";
+
+function loadStoredStatsEta() {
+  try {
+    const raw = localStorage.getItem(STATS_ETA_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.value && parsed.caption ? parsed : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function storeStatsEta(value, caption, etaIso) {
+  try {
+    localStorage.setItem(STATS_ETA_STORAGE_KEY, JSON.stringify({ value, caption, etaIso }));
+  } catch (err) {
+    // Best-effort — a stale/missing cache just means the next quiet
+    // stretch falls back to the "not enough data" placeholder.
+  }
+}
+
+// Projects when the worldwide counter (capped at COUNTER_MAX) will hit
+// its cap, from the current total and the pace over the last 24h.
+// Paints the full-width ETA card above the stat grid with the result.
+function updateStatsEtaCard(total, loggedToday, rows) {
+  if (!statsEtaValueEl) return;
+
+  const remaining = COUNTER_MAX - total;
+  if (remaining <= 0) {
+    statsEtaValueEl.textContent = "Already there! 🎉";
+    statsEtaCaptionEl.textContent = `${COUNTER_MAX.toLocaleString("en-US")} beers logged worldwide`;
+    renderStatsEtaChart(rows, total, null);
+    return;
+  }
+
+  const ratePerHour = loggedToday / 24;
+  if (!ratePerHour) {
+    // No activity in the last 24h to compute a fresh pace — keep
+    // showing the last real calculation rather than a placeholder.
+    const stored = loadStoredStatsEta();
+    if (stored) {
+      statsEtaValueEl.textContent = stored.value;
+      statsEtaCaptionEl.textContent = stored.caption;
+      renderStatsEtaChart(rows, total, stored.etaIso ? new Date(stored.etaIso) : null);
+    } else {
+      statsEtaValueEl.textContent = "Not enough data yet";
+      statsEtaCaptionEl.textContent = "Needs more recent activity to estimate the millionth beer";
+      renderStatsEtaChart(rows, total, null);
+    }
+    return;
+  }
+
+  const hoursRemaining = remaining / ratePerHour;
+  const etaDate = new Date(Date.now() + hoursRemaining * 60 * 60 * 1000);
+  const formattedDate = etaDate.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const caption = `The millionth beer, in ${formatEtaDuration(hoursRemaining)} at the current pace`;
+
+  statsEtaValueEl.textContent = formattedDate;
+  statsEtaCaptionEl.textContent = caption;
+  storeStatsEta(formattedDate, caption, etaDate.toISOString());
+  renderStatsEtaChart(rows, total, etaDate);
+}
+
+// Tapping the ETA card grows it downward to reveal a small chart:
+// years along the x-axis, cumulative beers logged along the y-axis,
+// a solid line for the real history and a dashed line projecting
+// forward to the 1,000,000 mark at the current pace.
+const statsEtaCardEl = document.getElementById("stats-eta-card");
+const statsEtaChartEl = document.getElementById("stats-eta-chart");
+
+function toggleStatsEtaChart() {
+  if (!statsEtaCardEl) return;
+  const expanded = statsEtaCardEl.classList.toggle("is-expanded");
+  statsEtaCardEl.setAttribute("aria-expanded", expanded ? "true" : "false");
+}
+
+if (statsEtaCardEl) {
+  statsEtaCardEl.addEventListener("click", toggleStatsEtaChart);
+  statsEtaCardEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleStatsEtaChart();
+    }
+  });
+}
+
+// Buckets raw entries into a cumulative "beers logged by end of year"
+// series, e.g. [{year: 2023, total: 4200}, {year: 2024, total: 15300}, ...]
+function computeYearlyCumulative(rows) {
+  const counts = new Map();
+  rows.forEach((r) => {
+    if (!r.created_at) return;
+    const year = new Date(r.created_at).getFullYear();
+    if (Number.isNaN(year)) return;
+    counts.set(year, (counts.get(year) || 0) + 1);
+  });
+  const years = Array.from(counts.keys()).sort((a, b) => a - b);
+  let cumulative = 0;
+  return years.map((year) => {
+    cumulative += counts.get(year);
+    return { year, total: cumulative };
+  });
+}
+
+function renderStatsEtaChart(rows, total, etaDate) {
+  if (!statsEtaChartEl) return;
+  const points = computeYearlyCumulative(rows || []);
+  if (!points.length) {
+    statsEtaChartEl.innerHTML = "";
+    return;
+  }
+
+  // Make sure the most recent point reflects the live total (today),
+  // not just whatever was logged by Dec 31 of the current year.
+  const nowYear = new Date().getFullYear();
+  if (points[points.length - 1].year === nowYear) {
+    points[points.length - 1].total = total;
+  } else {
+    points.push({ year: nowYear, total });
+  }
+
+  // The dashed "supposed predictability" line runs from today's point
+  // straight to the 1,000,000 mark on the ETA date, per the same pace
+  // used for the headline date above.
+  const projectionEnd = etaDate
+    ? { year: etaDate.getFullYear() + etaDate.getMonth() / 12, total: COUNTER_MAX }
+    : null;
+
+  const years = points.map((p) => p.year).concat(projectionEnd ? [projectionEnd.year] : []);
+  const minYear = Math.min(...years);
+  const maxYear = Math.max(...years);
+  const maxTotal = COUNTER_MAX;
+
+  const width = 300;
+  const height = 150;
+  const padL = 34;
+  const padR = 8;
+  const padT = 10;
+  const padB = 20;
+  const innerW = width - padL - padR;
+  const innerH = height - padT - padB;
+
+  const xFor = (year) => padL + ((year - minYear) / (maxYear - minYear || 1)) * innerW;
+  const yFor = (val) => padT + innerH - (Math.min(val, maxTotal) / maxTotal) * innerH;
+
+  const solidPath = points
+    .map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.year).toFixed(1)},${yFor(p.total).toFixed(1)}`)
+    .join(" ");
+
+  const last = points[points.length - 1];
+  const dashedPath = projectionEnd
+    ? `M${xFor(last.year).toFixed(1)},${yFor(last.total).toFixed(1)} L${xFor(projectionEnd.year).toFixed(1)},${yFor(projectionEnd.total).toFixed(1)}`
+    : "";
+
+  const yTicks = [0, 250000, 500000, 750000, 1000000];
+  const gridLines = yTicks
+    .map((t) => {
+      const y = yFor(t).toFixed(1);
+      return `<line x1="${padL}" y1="${y}" x2="${width - padR}" y2="${y}" class="stats-eta-chart-grid" />`;
+    })
+    .join("");
+  const yLabels = yTicks
+    .map((t) => {
+      const y = yFor(t).toFixed(1);
+      const label = t === 0 ? "0" : t >= 1000000 ? "1M" : `${Math.round(t / 1000)}k`;
+      return `<text x="${padL - 6}" y="${y}" class="stats-eta-chart-ylabel" text-anchor="end" dominant-baseline="middle">${label}</text>`;
+    })
+    .join("");
+
+  const xLabelYears = Array.from(
+    new Set([minYear, nowYear, projectionEnd ? Math.round(projectionEnd.year) : null].filter((y) => y !== null && y !== undefined))
+  );
+  const xLabels = xLabelYears
+    .map((year) => {
+      const x = xFor(year).toFixed(1);
+      return `<text x="${x}" y="${height - 4}" class="stats-eta-chart-xlabel" text-anchor="middle">${year}</text>`;
+    })
+    .join("");
+
+  const nowDot = `<circle cx="${xFor(last.year).toFixed(1)}" cy="${yFor(last.total).toFixed(1)}" r="3" class="stats-eta-chart-dot" />`;
+  const goalDot = projectionEnd
+    ? `<circle cx="${xFor(projectionEnd.year).toFixed(1)}" cy="${yFor(projectionEnd.total).toFixed(1)}" r="3" class="stats-eta-chart-goal-dot" />`
+    : "";
+
+  statsEtaChartEl.innerHTML = `
+    ${gridLines}
+    <path d="${solidPath}" class="stats-eta-chart-line" fill="none" />
+    ${dashedPath ? `<path d="${dashedPath}" class="stats-eta-chart-projection" fill="none" stroke-dasharray="4 4" />` : ""}
+    ${nowDot}
+    ${goalDot}
+    ${yLabels}
+    ${xLabels}
+  `;
+}
+
 async function loadWorldStats() {
   statsTotalEl.textContent = "–";
   statsTodayEl.textContent = "–";
   statsRatingEl.textContent = "–";
   statsPriceEl.textContent = "–";
   statsStatusEl.hidden = true;
+  if (statsEtaValueEl) statsEtaValueEl.textContent = "Calculating…";
+  if (statsEtaCaptionEl) statsEtaCaptionEl.textContent = "Estimated date of the 1,000,000th beer";
 
   try {
     const { data, error } = await supabaseClient
@@ -2641,11 +3450,14 @@ async function loadWorldStats() {
     statsTodayEl.textContent = loggedToday.toLocaleString("en-US");
     statsRatingEl.textContent = avgRating !== null ? `${avgRating.toFixed(1)} ★` : "–";
     statsPriceEl.textContent = avgPrice !== null ? `$${avgPrice.toFixed(2)}` : "–";
+    updateStatsEtaCard(total, loggedToday, rows);
   } catch (err) {
     console.error("Failed to load worldwide stats:", err);
     statsStatusEl.hidden = false;
     statsStatusEl.classList.add("field-hint-error");
     statsStatusEl.textContent = "Couldn't load stats — try again.";
+    if (statsEtaValueEl) statsEtaValueEl.textContent = "–";
+    if (statsEtaCaptionEl) statsEtaCaptionEl.textContent = "Estimated date of the 1,000,000th beer";
   }
 }
 

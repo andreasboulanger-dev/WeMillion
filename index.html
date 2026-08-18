@@ -57,21 +57,96 @@
     </div>
   </div>
 
-  <!-- Satellite view toggle: sits in its own column below the menu
-       button (shared .menu-icon-btn look), disabled until the
-       satellite raster layer has actually been added to the map (see
-       setSatelliteView in app.js). -->
-  <div id="satellite-toggle-panel" class="satellite-toggle-panel">
+  <!-- View menu: a second small popover in the same top-right column,
+       opened with a "Layer" icon (it now controls three stacked
+       layers of choice, not just the basemap). Each section is a
+       horizontal row of icon-only options with a solid pill that
+       sits under whichever one is active; the pill itself is a
+       draggable thumb, same finger-follow mechanics as an iOS
+       segmented control (see createIconRow in app.js) — press and
+       drag it across the row, or just tap an icon directly.
+
+       Map (mutually exclusive): Satellite / a country-coverage view
+       of the person's own countries / of the ones they're missing.
+       Disabled until the satellite raster layer has actually been
+       added to the map (see setViewBasemapMode in app.js), since
+       Satellite is the default.
+
+       Show (mutually exclusive): who counts toward the lights shown
+       on the globe — Everybody / their league / just them.
+
+       Time: scopes both the giant counter and the globe's beer
+       lights to All time / Week / 24h. Used to be its own separate
+       top-left icon+pill; folded in here as a third row instead. -->
+  <div id="view-menu-panel" class="view-menu-panel">
     <button
-      id="satellite-toggle-btn"
+      id="view-menu-btn"
       class="menu-icon-btn"
       type="button"
-      aria-pressed="false"
-      aria-label="Toggle satellite view"
+      aria-haspopup="menu"
+      aria-expanded="false"
+      aria-label="Map, scope and time options"
       disabled
     >
-      <span class="material-symbols-rounded" aria-hidden="true">satellite_alt</span>
+      <span class="material-symbols-rounded" id="view-menu-btn-icon" aria-hidden="true">layers</span>
     </button>
+
+    <div id="view-menu-list" class="menu-panel-list view-menu-list" role="menu" aria-labelledby="view-menu-btn" hidden>
+      <div class="menu-popover-section-label">Map</div>
+      <div id="view-mode-row" class="popover-icon-row" role="radiogroup" aria-label="Map">
+        <span id="view-mode-thumb" class="popover-icon-row-thumb" aria-hidden="true"></span>
+        <button type="button" class="popover-icon-row-item is-active" id="view-item-satellite" data-view-mode="satellite" role="radio" aria-checked="true" aria-label="Satellite">
+          <span class="material-symbols-rounded" aria-hidden="true">satellite_alt</span>
+        </button>
+        <button type="button" class="popover-icon-row-item" id="view-item-my-country" data-view-mode="my-country" role="radio" aria-checked="false" aria-label="My country only">
+          <span class="material-symbols-rounded" aria-hidden="true">flag</span>
+        </button>
+        <button type="button" class="popover-icon-row-item" id="view-item-missing-countries" data-view-mode="missing-countries" role="radio" aria-checked="false" aria-label="Countries I don't have">
+          <span class="material-symbols-rounded" aria-hidden="true">public_off</span>
+        </button>
+      </div>
+
+      <div class="menu-popover-divider" role="separator"></div>
+
+      <div class="menu-popover-section-label">Show</div>
+      <div id="view-scope-row" class="popover-icon-row" role="radiogroup" aria-label="Show">
+        <span id="view-scope-thumb" class="popover-icon-row-thumb" aria-hidden="true"></span>
+        <button type="button" class="popover-icon-row-item is-active" id="view-item-everybody" data-view-scope="everybody" role="radio" aria-checked="true" aria-label="Everybody counts">
+          <span class="material-symbols-rounded" aria-hidden="true">public</span>
+        </button>
+        <button type="button" class="popover-icon-row-item" id="view-item-league" data-view-scope="league" role="radio" aria-checked="false" aria-label="My league only">
+          <span class="material-symbols-rounded" aria-hidden="true">groups</span>
+        </button>
+        <button type="button" class="popover-icon-row-item" id="view-item-me" data-view-scope="me" role="radio" aria-checked="false" aria-label="Me only">
+          <span class="material-symbols-rounded" aria-hidden="true">person</span>
+        </button>
+      </div>
+
+      <div class="menu-popover-divider" role="separator"></div>
+
+      <div class="menu-popover-section-label">Time</div>
+      <div id="counter-range-row" class="popover-icon-row" role="radiogroup" aria-label="Time range">
+        <span id="counter-range-thumb" class="popover-icon-row-thumb" aria-hidden="true"></span>
+        <button type="button" class="popover-icon-row-item is-active" id="view-item-range-all" data-range="all" role="radio" aria-checked="true" aria-label="All time">
+          <span class="counter-range-icon" aria-hidden="true">
+            <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
+            <span class="counter-range-icon-badge">&#8734;</span>
+          </span>
+        </button>
+        <button type="button" class="popover-icon-row-item" id="view-item-range-week" data-range="week" role="radio" aria-checked="false" aria-label="Week">
+          <span class="counter-range-icon" aria-hidden="true">
+            <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
+            <span class="counter-range-icon-badge">W</span>
+          </span>
+        </button>
+        <button type="button" class="popover-icon-row-item" id="view-item-range-24h" data-range="24h" role="radio" aria-checked="false" aria-label="Last 24 hours">
+          <span class="counter-range-icon" aria-hidden="true">
+            <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
+            <span class="counter-range-icon-badge">24</span>
+          </span>
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Giant animated counter, counts up to 1,000,000 on load. The
@@ -82,50 +157,6 @@
     <button id="beer-counter-value" type="button" aria-label="View worldwide stats">0</button>
     <span class="beer-counter-label">beers logged worldwide</span>
     <span id="beer-counter-remaining" aria-hidden="true"></span>
-  </div>
-
-  <!-- Time-range control ("Timing"): icon-only button, pinned
-       top-left — the mirror of the top-right menu button. Tapping it
-       reveals a long pill to its right with three segments (All time
-       / Week / 24h); the active segment is itself a draggable thumb,
-       like an iOS segmented control you can drag your thumb across
-       instead of only tapping. Filters both the counter above and the
-       beer lights on the globe. Icon button matches the top-right
-       menu button's frosted-glass look exactly (shared
-       .menu-icon-btn). -->
-  <div id="counter-range-panel" class="counter-range-panel">
-    <button
-      id="counter-range-btn"
-      class="menu-icon-btn"
-      type="button"
-      aria-haspopup="true"
-      aria-expanded="false"
-      aria-label="Time range"
-    >
-      <span class="material-symbols-rounded" aria-hidden="true">schedule</span>
-    </button>
-
-    <div id="counter-range-track" class="counter-range-track" role="radiogroup" aria-label="Time range" hidden>
-      <span id="counter-range-thumb" class="counter-range-thumb" aria-hidden="true"></span>
-      <button type="button" class="counter-range-seg is-selected" data-range="all" role="radio" aria-checked="true" aria-label="All time">
-        <span class="counter-range-icon" aria-hidden="true">
-          <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
-          <span class="counter-range-icon-badge">&#8734;</span>
-        </span>
-      </button>
-      <button type="button" class="counter-range-seg" data-range="week" role="radio" aria-checked="false" aria-label="Week">
-        <span class="counter-range-icon" aria-hidden="true">
-          <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
-          <span class="counter-range-icon-badge">W</span>
-        </span>
-      </button>
-      <button type="button" class="counter-range-seg" data-range="24h" role="radio" aria-checked="false" aria-label="Last 24 hours">
-        <span class="counter-range-icon" aria-hidden="true">
-          <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
-          <span class="counter-range-icon-badge">24</span>
-        </span>
-      </button>
-    </div>
   </div>
 
   <!-- Live activity feed: Twitch-chat-style notifications ("[user]
@@ -268,9 +299,15 @@
     </div>
 
     <div id="profile-stats">
-      <div class="profile-stat">
+      <div class="profile-stat" id="profile-stat-beers" role="button" tabindex="0" aria-expanded="false">
         <span id="profile-stat-count" class="profile-stat-value">–</span>
         <span class="profile-stat-label">Beers logged</span>
+
+        <div id="profile-activity-wrap" class="profile-activity-wrap">
+          <ol id="profile-activity-list" class="profile-activity-list"></ol>
+          <p id="profile-activity-empty" class="field-hint" hidden>No beers logged yet.</p>
+          <p id="profile-activity-status" class="field-hint" hidden>Loading…</p>
+        </div>
       </div>
       <div class="profile-stat">
         <span id="profile-stat-since" class="profile-stat-value">–</span>
@@ -296,6 +333,51 @@
       ></div>
     </div>
 
+    <!-- League: a group the user is a member of (at most one at a
+         time — joining/creating another replaces it). Backs the "My
+         league only" option in the globe's view menu. Only one of
+         the two inner blocks is shown at a time, per whether
+         renderProfileLeague() in app.js finds an existing membership. -->
+    <div id="profile-league-card" class="field-group">
+      <span class="field-label" id="profile-league-label">League</span>
+
+      <div id="profile-league-none">
+        <p class="field-hint">Join a league with an invite code, or start your own.</p>
+        <div class="profile-league-row">
+          <input
+            id="profile-league-code-input"
+            type="text"
+            maxlength="8"
+            autocomplete="off"
+            autocapitalize="characters"
+            placeholder="Invite code"
+          />
+          <button type="button" id="profile-league-join-btn" class="profile-league-btn">Join</button>
+        </div>
+        <button type="button" id="profile-league-create-btn" class="profile-league-btn profile-league-btn-secondary">
+          Create a league
+        </button>
+      </div>
+
+      <div id="profile-league-active" hidden>
+        <div class="profile-league-active-row">
+          <span id="profile-league-name" class="profile-league-name">–</span>
+          <span id="profile-league-count" class="profile-league-count">–</span>
+        </div>
+        <div class="profile-league-row">
+          <span id="profile-league-invite-code" class="profile-league-invite-code">–</span>
+          <button type="button" id="profile-league-copy-btn" class="profile-league-btn profile-league-btn-secondary">
+            Copy code
+          </button>
+        </div>
+        <button type="button" id="profile-league-leave-btn" class="profile-league-btn profile-league-btn-danger">
+          Leave league
+        </button>
+      </div>
+
+      <p id="profile-league-status" class="field-hint" hidden></p>
+    </div>
+
     <p id="profile-favorite" class="field-hint" hidden></p>
     <p id="profile-status" class="field-hint" hidden></p>
   </div>
@@ -310,6 +392,21 @@
         <span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>
       </button>
       <h2 id="stats-sheet-title">Worldwide stats</h2>
+    </div>
+
+    <!-- Full-width "when do we hit a million" card: projects an ETA
+         from the current total plus the last-24h pace (see
+         loadWorldStats in app.js). Sits right below the title, above
+         the 2x2 grid, since it's the single most attention-grabbing
+         number in this drawer. -->
+    <div id="stats-eta-card" class="stats-eta-card" role="button" tabindex="0" aria-expanded="false">
+      <div class="stats-eta-text">
+        <span id="stats-eta-value" class="stats-eta-value">Calculating…</span>
+        <span id="stats-eta-caption" class="stats-eta-caption">Estimated date of the 1,000,000th beer</span>
+      </div>
+      <div id="stats-eta-chart-wrap" class="stats-eta-chart-wrap">
+        <svg id="stats-eta-chart" class="stats-eta-chart" viewBox="0 0 300 150" preserveAspectRatio="none" aria-hidden="true"></svg>
+      </div>
     </div>
 
     <div id="stats-grid">
