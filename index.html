@@ -38,23 +38,19 @@
     </button>
 
     <div id="menu-panel-list" class="menu-panel-list" role="menu" aria-labelledby="menu-btn" hidden>
-      <button type="button" class="menu-popover-item" id="menu-item-home" role="menuitem">
+      <button type="button" class="menu-popover-item" id="menu-item-home" data-icon-kind="home" role="menuitem">
         <span class="material-symbols-rounded menu-popover-icon" data-icon-kind="home">home</span>
         <span>Home</span>
       </button>
-      <button type="button" class="menu-popover-item" id="menu-item-profile" role="menuitem">
-        <span id="menu-profile-avatar-emoji" class="menu-popover-icon menu-popover-avatar" aria-hidden="true">🍺</span>
+      <button type="button" class="menu-popover-item" id="menu-item-profile" data-icon-kind="profile" role="menuitem">
+        <span id="menu-profile-avatar-emoji" class="material-symbols-rounded menu-popover-icon" data-icon-kind="profile" aria-hidden="true">person</span>
         <span>Profil</span>
       </button>
-      <button type="button" class="menu-popover-item" id="menu-item-settings" role="menuitem">
-        <span class="material-symbols-rounded menu-popover-icon" data-icon-kind="settings">settings</span>
-        <span>Paramètre</span>
-      </button>
-      <button type="button" class="menu-popover-item" id="menu-item-stats" role="menuitem">
+      <button type="button" class="menu-popover-item" id="menu-item-stats" data-icon-kind="stats" role="menuitem">
         <span class="material-symbols-rounded menu-popover-icon" data-icon-kind="stats">bar_chart</span>
         <span>Stats</span>
       </button>
-      <button type="button" class="menu-popover-item" id="menu-item-battlefield" role="menuitem">
+      <button type="button" class="menu-popover-item" id="menu-item-battlefield" data-icon-kind="battlefield" role="menuitem">
         <span class="material-symbols-rounded menu-popover-icon" data-icon-kind="battlefield">flag</span>
         <span>Battlefield</span>
       </button>
@@ -143,8 +139,29 @@
   <div id="beer-sheet" class="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="beer-sheet-title" hidden>
     <div class="sheet-handle" aria-hidden="true"></div>
 
+    <!-- Both corner buttons close the drawer — "Add my beer" is opened
+         straight from the FAB with no prior screen, so there's nowhere
+         else for "back" to go. Kept as two separate controls (rather
+         than reusing one) since a top-left back + top-right close is
+         the pattern the other drawers use. -->
+    <button type="button" class="beer-sheet-back-btn" id="beer-back-btn" aria-label="Back">
+      <span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>
+    </button>
+
     <div class="sheet-header">
       <h2 id="beer-sheet-title">Add my beer</h2>
+      <button type="button" class="beer-sheet-close-btn" id="beer-close-btn" aria-label="Close">
+        <span class="material-symbols-rounded" aria-hidden="true">close</span>
+      </button>
+    </div>
+
+    <!-- Right under the close button: toggles the optional fields
+         below (Beer / Price / Rating) open or shut. Off by default,
+         so the drawer opens at its smallest — just photo + bar. -->
+    <div class="beer-expert-row">
+      <button type="button" id="beer-expert-toggle" class="beer-expert-toggle" aria-pressed="false" aria-controls="beer-expert-fields">
+        Expert mode
+      </button>
     </div>
 
     <form id="beer-form">
@@ -159,32 +176,54 @@
         <p id="bar-required-hint" class="field-hint" hidden></p>
       </div>
 
-      <div class="field-group">
-        <span class="field-label" id="beer-label">Beer <span class="field-optional">(optional)</span></span>
-        <div id="beer-chip-row" class="chip-row" role="radiogroup" aria-labelledby="beer-label"></div>
-        <div id="beer-search" class="inline-search" hidden>
-          <input id="beer-search-input" type="text" placeholder="Search or type a beer name…" autocomplete="off" />
-          <ul id="beer-search-results" class="search-results"></ul>
-        </div>
-      </div>
+      <!-- Collapsed via a grid-template-rows 0fr→1fr transition (see
+           style.css) so the drawer resizes smoothly instead of
+           snapping when Expert mode is toggled. -->
+      <div id="beer-expert-fields">
+        <div class="beer-expert-fields-inner">
+          <div class="field-group">
+            <span class="field-label" id="beer-label">Beer <span class="field-optional">(optional)</span></span>
+            <div id="beer-chip-row" class="chip-row" role="radiogroup" aria-labelledby="beer-label"></div>
+            <div id="beer-search" class="inline-search" hidden>
+              <input id="beer-search-input" type="text" placeholder="Search or type a beer name…" autocomplete="off" />
+              <ul id="beer-search-results" class="search-results"></ul>
+            </div>
+          </div>
 
-      <div class="field-group">
-        <span class="field-label" id="price-label">Price <span class="field-optional">(optional)</span></span>
-        <div id="price-wheel" class="price-wheel">
-          <div id="price-carousel" class="price-wheel-track" role="radiogroup" aria-labelledby="price-label"></div>
-          <div class="price-wheel-indicator" aria-hidden="true"></div>
-          <div class="price-wheel-fade price-wheel-fade-left" aria-hidden="true"></div>
-          <div class="price-wheel-fade price-wheel-fade-right" aria-hidden="true"></div>
-        </div>
-      </div>
+          <div class="field-group">
+            <span class="field-label" id="price-label">Price <span class="field-optional">(optional)</span></span>
+            <div id="price-wheel" class="price-wheel">
+              <div id="price-carousel" class="price-wheel-track" role="radiogroup" aria-labelledby="price-label"></div>
+              <div class="price-wheel-indicator" aria-hidden="true"></div>
+              <div class="price-wheel-fade price-wheel-fade-left" aria-hidden="true"></div>
+              <div class="price-wheel-fade price-wheel-fade-right" aria-hidden="true"></div>
+            </div>
+          </div>
 
-      <span class="field-label" id="rating-label">Rating <span class="field-optional">(optional)</span></span>
-      <div class="star-rating" role="radiogroup" aria-labelledby="rating-label">
-        <button type="button" class="star" data-value="1" role="radio" aria-checked="false" aria-label="1 star"><span class="material-symbols-rounded">star</span></button>
-        <button type="button" class="star" data-value="2" role="radio" aria-checked="false" aria-label="2 stars"><span class="material-symbols-rounded">star</span></button>
-        <button type="button" class="star" data-value="3" role="radio" aria-checked="false" aria-label="3 stars"><span class="material-symbols-rounded">star</span></button>
-        <button type="button" class="star" data-value="4" role="radio" aria-checked="false" aria-label="4 stars"><span class="material-symbols-rounded">star</span></button>
-        <button type="button" class="star" data-value="5" role="radio" aria-checked="false" aria-label="5 stars"><span class="material-symbols-rounded">star</span></button>
+          <!-- Same dial mechanics as Price, just a fixed list of common
+               beer sizes instead of a numeric range (see SIZE_VALUES
+               in app.js). -->
+          <div class="field-group">
+            <span class="field-label" id="size-label">Size <span class="field-optional">(optional)</span></span>
+            <div id="size-wheel" class="price-wheel size-wheel">
+              <div id="size-carousel" class="price-wheel-track size-wheel-track" role="radiogroup" aria-labelledby="size-label"></div>
+              <div class="price-wheel-indicator size-wheel-indicator" aria-hidden="true"></div>
+              <div class="price-wheel-fade price-wheel-fade-left" aria-hidden="true"></div>
+              <div class="price-wheel-fade price-wheel-fade-right" aria-hidden="true"></div>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <span class="field-label" id="rating-label">Rating <span class="field-optional">(optional)</span></span>
+            <div class="star-rating" role="radiogroup" aria-labelledby="rating-label">
+              <button type="button" class="star" data-value="1" role="radio" aria-checked="false" aria-label="1 star"><span class="material-symbols-rounded">star</span></button>
+              <button type="button" class="star" data-value="2" role="radio" aria-checked="false" aria-label="2 stars"><span class="material-symbols-rounded">star</span></button>
+              <button type="button" class="star" data-value="3" role="radio" aria-checked="false" aria-label="3 stars"><span class="material-symbols-rounded">star</span></button>
+              <button type="button" class="star" data-value="4" role="radio" aria-checked="false" aria-label="4 stars"><span class="material-symbols-rounded">star</span></button>
+              <button type="button" class="star" data-value="5" role="radio" aria-checked="false" aria-label="5 stars"><span class="material-symbols-rounded">star</span></button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <button id="save-beer-btn" type="submit">Save</button>
@@ -197,20 +236,19 @@
     <div class="sheet-handle" aria-hidden="true"></div>
 
     <div class="sheet-header">
+      <button type="button" class="sheet-back-btn" id="profile-back-btn" aria-label="Back">
+        <span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>
+      </button>
       <h2 id="profile-sheet-title">Profile</h2>
     </div>
 
     <div id="profile-avatar-row">
-      <button id="profile-avatar-btn" type="button" aria-label="Change avatar" aria-haspopup="true">
-        <span id="profile-avatar-emoji">🍺</span>
-      </button>
+      <span id="profile-avatar-icon" class="material-symbols-rounded is-filled" aria-hidden="true">person</span>
       <div class="field-group" id="profile-username-group">
         <label class="field-label" for="profile-username-input">Name</label>
         <input id="profile-username-input" type="text" maxlength="40" autocomplete="off" placeholder="Beer Explorer" />
       </div>
     </div>
-
-    <div id="profile-avatar-picker" class="chip-row" role="radiogroup" aria-label="Choose an avatar" hidden></div>
 
     <div id="profile-stats">
       <div class="profile-stat">
@@ -220,6 +258,14 @@
       <div class="profile-stat">
         <span id="profile-stat-since" class="profile-stat-value">–</span>
         <span class="profile-stat-label">Member since</span>
+      </div>
+      <div class="profile-stat">
+        <span id="profile-stat-spend" class="profile-stat-value">–</span>
+        <span class="profile-stat-label">Spent</span>
+      </div>
+      <div class="profile-stat">
+        <span id="profile-stat-litres" class="profile-stat-value">–</span>
+        <span class="profile-stat-label">Litres drunk</span>
       </div>
     </div>
 
@@ -243,6 +289,9 @@
     <div class="sheet-handle" aria-hidden="true"></div>
 
     <div class="sheet-header">
+      <button type="button" class="sheet-back-btn" id="stats-back-btn" aria-label="Back">
+        <span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>
+      </button>
       <h2 id="stats-sheet-title">Worldwide stats</h2>
     </div>
 
@@ -322,6 +371,9 @@
     <div class="sheet-handle" aria-hidden="true"></div>
 
     <div class="sheet-header">
+      <button type="button" class="sheet-back-btn" id="battlefield-back-btn" aria-label="Back">
+        <span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>
+      </button>
       <h2 id="battlefield-sheet-title">Battlefield</h2>
     </div>
 

@@ -302,7 +302,7 @@ const SUPABASE_ANON_KEY =
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let currentUser = null;
-let currentProfile = null; // { id, username, avatar_emoji, created_at }
+let currentProfile = null; // { id, username, created_at }
 
 // Sign the visitor in anonymously (or restore their existing anonymous
 // session), make sure a profiles row exists (handled server-side by a
@@ -336,7 +336,7 @@ async function loadProfile() {
   try {
     const { data, error } = await supabaseClient
       .from("profiles")
-      .select("id, username, avatar_emoji, created_at")
+      .select("id, username, created_at")
       .eq("id", currentUser.id)
       .single();
     if (error) throw error;
@@ -653,6 +653,9 @@ const beerSheet = document.getElementById("beer-sheet");
 const beerForm = document.getElementById("beer-form");
 const beerPhotoThumb = document.getElementById("beer-photo-thumb");
 
+const beerExpertToggle = document.getElementById("beer-expert-toggle");
+const beerExpertFields = document.getElementById("beer-expert-fields");
+
 const barSearchInput = document.getElementById("bar-search-input");
 const barSearchResults = document.getElementById("bar-search-results");
 const barRequiredHint = document.getElementById("bar-required-hint");
@@ -663,6 +666,7 @@ const beerSearchInput = document.getElementById("beer-search-input");
 const beerSearchResults = document.getElementById("beer-search-results");
 
 const priceCarousel = document.getElementById("price-carousel");
+const sizeCarousel = document.getElementById("size-carousel");
 
 const legendPopup = document.getElementById("legend-popup");
 
@@ -732,8 +736,10 @@ function openBeerSheet() {
   resetBarState();
   resetBeerNameState();
   resetPriceState();
+  resetSizeState();
   renderBeerChips();
   locateUserForBars();
+  setBeerExpertMode(false);
 }
 
 function closeBeerSheet() {
@@ -755,9 +761,25 @@ function resetBeerForm() {
   resetBarState();
   resetBeerNameState();
   resetPriceState();
+  resetSizeState();
 }
 
 sheetBackdrop.addEventListener("click", closeBeerSheet);
+document.getElementById("beer-back-btn").addEventListener("click", closeBeerSheet);
+document.getElementById("beer-close-btn").addEventListener("click", closeBeerSheet);
+
+/* Expert mode: reveals the optional Beer / Price / Rating fields.
+   Off by default each time the drawer opens (see openBeerSheet)
+   so it always starts at its smallest. */
+function setBeerExpertMode(isOpen) {
+  beerExpertFields.classList.toggle("is-open", isOpen);
+  beerExpertToggle.setAttribute("aria-pressed", String(isOpen));
+}
+
+beerExpertToggle.addEventListener("click", () => {
+  const isOpen = beerExpertToggle.getAttribute("aria-pressed") === "true";
+  setBeerExpertMode(!isOpen);
+});
 
 /* ---------------------------------------------------------------- *
  *  Shared little "chip" builder used by both the Nearby and Beer
@@ -837,17 +859,12 @@ function locateUserForBars() {
   );
 }
 
-// Contextual line under the input: what "nearby" means right now, or —
-// once the user's tried to save without a name — a validation error.
+// Called on reset/location changes. The only text this hint area ever
+// shows now is the "please enter a bar name" validation error (set
+// directly where that's checked), so this just keeps it hidden the
+// rest of the time.
 function updateBarHint() {
-  barRequiredHint.hidden = false;
-  if (locationStatus === "granted") {
-    barRequiredHint.textContent = "Showing bars near you as you type.";
-  } else if (locationStatus === "denied") {
-    barRequiredHint.textContent = "Location is off — showing every matching bar.";
-  } else {
-    barRequiredHint.textContent = "Start typing to search.";
-  }
+  barRequiredHint.hidden = true;
 }
 
 function selectBar(name, lat = null, lon = null) {
@@ -1124,9 +1141,14 @@ function initPriceCarousel() {
     btn.className = "price-wheel-item";
     btn.textContent = `$${value}`;
     btn.dataset.value = String(value);
+    btn.dataset.decimal = "0"; // tenths, set via long-press/upward-drag fine-tune
     btn.setAttribute("role", "radio");
     btn.setAttribute("aria-checked", "false");
     btn.addEventListener("click", () => centerPriceItem(btn));
+    btn.addEventListener("pointerdown", (e) => onPriceItemPointerDown(e, btn));
+    btn.addEventListener("pointermove", (e) => onPriceItemPointerMove(e, btn));
+    btn.addEventListener("pointerup", (e) => onPriceItemPointerUp(e, btn));
+    btn.addEventListener("pointercancel", (e) => onPriceItemPointerUp(e, btn));
     priceCarousel.appendChild(btn);
   }
 
@@ -1184,7 +1206,10 @@ function commitPriceWheelSelection() {
   });
   if (!closest) return;
 
-  selectedPrice = closest.dataset.value === PRICE_SKIP_VALUE ? null : Number(closest.dataset.value);
+  selectedPrice =
+    closest.dataset.value === PRICE_SKIP_VALUE
+      ? null
+      : Number(closest.dataset.value) + Number(closest.dataset.decimal || 0) / 10;
   Array.from(priceCarousel.children).forEach((item) => {
     const isSelected = item === closest;
     item.classList.toggle("is-selected", isSelected);
@@ -1194,16 +1219,303 @@ function commitPriceWheelSelection() {
 
 function resetPriceState() {
   selectedPrice = null;
+  closePriceDecimalAdjust(false);
   priceCarousel.scrollTo({ left: 0 });
   Array.from(priceCarousel.children).forEach((item, i) => {
     item.classList.toggle("is-selected", i === 0);
     item.setAttribute("aria-checked", i === 0 ? "true" : "false");
+    if (item.dataset.value !== PRICE_SKIP_VALUE) {
+      item.dataset.decimal = "0";
+      item.textContent = `$${item.dataset.value}`;
+    }
   });
   requestAnimationFrame(updatePriceWheelVisuals);
 }
 
 initPriceCarousel();
 requestAnimationFrame(updatePriceWheelVisuals);
+
+/* ---------------------------------------------------------------- *
+ *  Price fine-tune: lets a cent-level value be dialed in on top of
+ *  the whole-dollar wheel above, via either gesture:
+ *    - hold a number for PRICE_LONG_PRESS_MS without moving, or
+ *    - start dragging upward on a number past a small threshold
+ *  Either opens a small vertical ".0"-".9" popover above that item;
+ *  further up/down movement (PRICE_DECIMAL_STEP_PX per digit) moves
+ *  through the tenths, and releasing commits it (e.g. "$7" -> "$7.4").
+ *  Ordinary sideways spinning of the wheel is untouched — this only
+ *  engages once vertical intent is clear, and .price-wheel-track sets
+ *  touch-action: pan-x so the bottom sheet doesn't swallow the
+ *  vertical drag as a page scroll before we get to see it.
+ * ---------------------------------------------------------------- */
+
+const PRICE_LONG_PRESS_MS = 1000;
+const PRICE_DECIMAL_TRIGGER_PX = 14; // upward move that opens fine-tune immediately
+const PRICE_DECIMAL_STEP_PX = 20; // vertical px per tenth digit
+const PRICE_DECIMAL_MAX_DIGIT = 9;
+
+let priceDecimalPopover = null;
+let priceDecimalActiveItem = null;
+let priceDecimalStartX = 0;
+let priceDecimalStartY = 0;
+let priceDecimalStartDigit = 0;
+let priceDecimalLongPressTimer = null;
+let priceDecimalDragging = false; // true once fine-tune mode is actually engaged
+let priceDecimalPointerId = null;
+
+function priceItemDecimal(item) {
+  return Number(item.dataset.decimal || 0);
+}
+
+function formatPriceItemLabel(item) {
+  const decimal = priceItemDecimal(item);
+  return decimal > 0 ? `$${item.dataset.value}.${decimal}` : `$${item.dataset.value}`;
+}
+
+function ensurePriceDecimalPopover() {
+  if (priceDecimalPopover) return priceDecimalPopover;
+  const el = document.createElement("div");
+  el.className = "price-decimal-popover";
+  el.setAttribute("aria-hidden", "true");
+  for (let d = 0; d <= PRICE_DECIMAL_MAX_DIGIT; d++) {
+    const digitEl = document.createElement("span");
+    digitEl.className = "price-decimal-digit";
+    digitEl.textContent = `.${d}`;
+    digitEl.dataset.digit = String(d);
+    el.appendChild(digitEl);
+  }
+  el.hidden = true;
+  // Appended to <body> with position: fixed (see style.css) rather than
+  // nested in the price wheel, since the drawer's grid-rows collapse
+  // trick relies on an overflow:hidden ancestor that would otherwise
+  // clip a popover poking out above the wheel.
+  document.body.appendChild(el);
+  priceDecimalPopover = el;
+  return el;
+}
+
+// Anchors the fixed-position popover to the current screen location of
+// `item` — called once on open, since the item's own position doesn't
+// shift again while a fine-tune drag is in progress.
+function positionPriceDecimalPopover(item) {
+  const popover = ensurePriceDecimalPopover();
+  const rect = item.getBoundingClientRect();
+  popover.style.left = `${rect.left + rect.width / 2}px`;
+  popover.style.top = `${rect.top}px`;
+}
+
+// Clamps to 0-9 and highlights the matching digit in the popover;
+// returns the clamped value so callers can store it.
+function updatePriceDecimalHighlight(digit) {
+  const clamped = Math.max(0, Math.min(PRICE_DECIMAL_MAX_DIGIT, digit));
+  const popover = ensurePriceDecimalPopover();
+  Array.from(popover.children).forEach((el) => {
+    el.classList.toggle("is-active", Number(el.dataset.digit) === clamped);
+  });
+  return clamped;
+}
+
+function openPriceDecimalAdjust(item, startDigit) {
+  priceDecimalDragging = true;
+  priceDecimalActiveItem = item;
+  item.classList.add("is-fine-tuning");
+  const popover = ensurePriceDecimalPopover();
+  positionPriceDecimalPopover(item);
+  popover.hidden = false;
+  requestAnimationFrame(() => popover.classList.add("is-open"));
+  updatePriceDecimalHighlight(startDigit);
+}
+
+function closePriceDecimalAdjust(commit) {
+  if (!priceDecimalDragging) return;
+  const item = priceDecimalActiveItem;
+  const popover = priceDecimalPopover;
+  if (popover) {
+    popover.classList.remove("is-open");
+    const onEnd = () => {
+      popover.hidden = true;
+      popover.removeEventListener("transitionend", onEnd);
+    };
+    popover.addEventListener("transitionend", onEnd);
+  }
+  if (item) {
+    item.classList.remove("is-fine-tuning");
+    if (commit) {
+      item.textContent = formatPriceItemLabel(item);
+      centerPriceItem(item); // re-centers + triggers commitPriceWheelSelection,
+      // which reads item.dataset.decimal set during the drag below
+    }
+  }
+  priceDecimalDragging = false;
+  priceDecimalActiveItem = null;
+}
+
+function onPriceItemPointerDown(e, item) {
+  if (item.dataset.value === PRICE_SKIP_VALUE) return;
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  clearTimeout(priceDecimalLongPressTimer);
+  priceDecimalStartX = e.clientX;
+  priceDecimalStartY = e.clientY;
+  priceDecimalStartDigit = priceItemDecimal(item);
+  priceDecimalPointerId = e.pointerId;
+  priceDecimalDragging = false;
+
+  priceDecimalLongPressTimer = setTimeout(() => {
+    if (priceDecimalPointerId === e.pointerId && !priceDecimalDragging) {
+      openPriceDecimalAdjust(item, priceDecimalStartDigit);
+    }
+  }, PRICE_LONG_PRESS_MS);
+}
+
+function onPriceItemPointerMove(e, item) {
+  if (priceDecimalPointerId !== e.pointerId) return;
+  const deltaY = priceDecimalStartY - e.clientY; // positive = moved upward
+
+  if (!priceDecimalDragging) {
+    const deltaX = Math.abs(e.clientX - priceDecimalStartX);
+    // Only treat this as fine-tune once the vertical movement clearly
+    // leads the horizontal one — otherwise it's just a normal spin.
+    if (deltaY > PRICE_DECIMAL_TRIGGER_PX && deltaY > deltaX) {
+      clearTimeout(priceDecimalLongPressTimer);
+      openPriceDecimalAdjust(item, priceDecimalStartDigit);
+      try {
+        item.setPointerCapture(e.pointerId);
+      } catch {
+        // Pointer capture is best-effort — harmless if unsupported.
+      }
+    } else {
+      return;
+    }
+  }
+
+  e.preventDefault();
+  const digit = updatePriceDecimalHighlight(priceDecimalStartDigit + Math.round(deltaY / PRICE_DECIMAL_STEP_PX));
+  item.dataset.decimal = String(digit);
+  item.textContent = formatPriceItemLabel(item);
+}
+
+function onPriceItemPointerUp(e, item) {
+  clearTimeout(priceDecimalLongPressTimer);
+  if (priceDecimalPointerId === e.pointerId) {
+    closePriceDecimalAdjust(priceDecimalDragging);
+  }
+  priceDecimalPointerId = null;
+}
+
+/* ---------------------------------------------------------------- *
+ *  Size: the same Apple-style wheel dial as Price, just spun off of
+ *  a fixed list of common beer sizes instead of a numeric range.
+ * ---------------------------------------------------------------- */
+
+const SIZE_ITEM_WIDTH = 78; // px, must match .size-wheel-item flex-basis
+const SIZE_SKIP_VALUE = ""; // sentinel dataset value for "no size"
+const SIZE_VALUES = [
+  "33cl", "35.5cl", "50cl", "57cl", "65cl", "74.5cl", "75cl", "1L",
+  "6pack", "24 crate", "30 crate",
+];
+
+let selectedSize = null;
+let sizeScrollRaf = null;
+let sizeCommitTimer = null;
+
+function initSizeCarousel() {
+  const skipBtn = document.createElement("button");
+  skipBtn.type = "button";
+  skipBtn.className = "price-wheel-item price-wheel-item-skip size-wheel-item";
+  skipBtn.textContent = "–";
+  skipBtn.dataset.value = SIZE_SKIP_VALUE;
+  skipBtn.setAttribute("role", "radio");
+  skipBtn.setAttribute("aria-label", "No size");
+  skipBtn.setAttribute("aria-checked", "true");
+  skipBtn.addEventListener("click", () => centerSizeItem(skipBtn));
+  sizeCarousel.appendChild(skipBtn);
+
+  SIZE_VALUES.forEach((value) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "price-wheel-item size-wheel-item";
+    btn.textContent = value;
+    btn.dataset.value = value;
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", "false");
+    btn.addEventListener("click", () => centerSizeItem(btn));
+    sizeCarousel.appendChild(btn);
+  });
+
+  sizeCarousel.addEventListener("scroll", onSizeWheelScroll, { passive: true });
+}
+
+// Smoothly spins the wheel so `item` lands under the center indicator.
+// The scroll handler below picks up the resulting scroll and commits
+// it as the selection once the motion settles.
+function centerSizeItem(item) {
+  item.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+}
+
+function onSizeWheelScroll() {
+  if (sizeScrollRaf) cancelAnimationFrame(sizeScrollRaf);
+  sizeScrollRaf = requestAnimationFrame(updateSizeWheelVisuals);
+
+  clearTimeout(sizeCommitTimer);
+  sizeCommitTimer = setTimeout(commitSizeWheelSelection, 120);
+}
+
+// Scales/fades each item by its distance from the center indicator so
+// the wheel reads as continuous motion while the user drags/flicks.
+function updateSizeWheelVisuals() {
+  const trackRect = sizeCarousel.getBoundingClientRect();
+  const centerX = trackRect.left + trackRect.width / 2;
+
+  Array.from(sizeCarousel.children).forEach((item) => {
+    const itemRect = item.getBoundingClientRect();
+    const itemCenter = itemRect.left + itemRect.width / 2;
+    const dist = Math.abs(itemCenter - centerX);
+    const norm = Math.min(dist / (SIZE_ITEM_WIDTH * 2.2), 1);
+    item.style.transform = `scale(${1 - norm * 0.4})`;
+    item.style.opacity = String(1 - norm * 0.7);
+  });
+}
+
+// Once the wheel stops moving, whichever item is nearest center becomes
+// the actual selection (and gets nudged the rest of the way to a clean
+// center via CSS scroll-snap already handling most of that).
+function commitSizeWheelSelection() {
+  const trackRect = sizeCarousel.getBoundingClientRect();
+  const centerX = trackRect.left + trackRect.width / 2;
+
+  let closest = null;
+  let closestDist = Infinity;
+  Array.from(sizeCarousel.children).forEach((item) => {
+    const itemRect = item.getBoundingClientRect();
+    const itemCenter = itemRect.left + itemRect.width / 2;
+    const dist = Math.abs(itemCenter - centerX);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closest = item;
+    }
+  });
+  if (!closest) return;
+
+  selectedSize = closest.dataset.value === SIZE_SKIP_VALUE ? null : closest.dataset.value;
+  Array.from(sizeCarousel.children).forEach((item) => {
+    const isSelected = item === closest;
+    item.classList.toggle("is-selected", isSelected);
+    item.setAttribute("aria-checked", isSelected ? "true" : "false");
+  });
+}
+
+function resetSizeState() {
+  selectedSize = null;
+  sizeCarousel.scrollTo({ left: 0 });
+  Array.from(sizeCarousel.children).forEach((item, i) => {
+    item.classList.toggle("is-selected", i === 0);
+    item.setAttribute("aria-checked", i === 0 ? "true" : "false");
+  });
+  requestAnimationFrame(updateSizeWheelVisuals);
+}
+
+initSizeCarousel();
+requestAnimationFrame(updateSizeWheelVisuals);
 
 /* ---------------------------------------------------------------- *
  *  Rating stars (unchanged behaviour, still fully optional).
@@ -1320,6 +1632,7 @@ beerForm.addEventListener("submit", (e) => {
     lng: userLng !== null ? userLng : selectedBarLng,
     beerName: selectedBeerName,
     price: selectedPrice, // null if untouched
+    size: selectedSize, // null if untouched
     rating: currentRating || 0, // 0 means "no rating given"
     photoDataUrl: capturedPhotoDataUrl,
   };
@@ -1342,6 +1655,33 @@ beerForm.addEventListener("submit", (e) => {
   saveBeerEntryInBackground(entry);
 });
 
+// Resolves (and caches, via the shared geocode cache used elsewhere
+// in this file) the country for a fresh entry's coordinates, so it
+// can be stored on the row itself. The server-side feed trigger
+// (see the beer_entries AFTER INSERT trigger in Supabase) keys its
+// "country discovered" / "took the throne" events off these two
+// columns — that's the only reason the client still does this
+// lookup: everything else about the feed now lives server-side.
+async function resolveEntryCountry(lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { country_code: null, country_name: null };
+  const key = roundCoordKey(lat, lng);
+  const cache = loadGeocodeCache();
+  let resolved = cache[key];
+  if (!resolved || resolved.country_code === undefined) {
+    try {
+      resolved = await reverseGeocodePlace(lat, lng);
+    } catch (err) {
+      resolved = { city: null, country: null, country_code: null };
+    }
+    cache[key] = resolved;
+    saveGeocodeCache(cache);
+  }
+  return {
+    country_code: resolved.country_code ? resolved.country_code.toUpperCase() : null,
+    country_name: resolved.country || null,
+  };
+}
+
 // Uploads the photo (if any) and writes the row to Supabase without
 // blocking the UI — by the time this resolves, or fails, the drawer
 // is long since closed and the counter/light are already updated.
@@ -1352,6 +1692,7 @@ async function saveBeerEntryInBackground(entry) {
   }
   try {
     const photoUrl = await uploadBeerPhoto(entry.photoDataUrl);
+    const { country_code, country_name } = await resolveEntryCountry(entry.lat, entry.lng);
     const { error } = await supabaseClient.from("beer_entries").insert({
       user_id: entry.userId,
       bar_name: entry.barName,
@@ -1359,8 +1700,11 @@ async function saveBeerEntryInBackground(entry) {
       bar_lng: entry.lng,
       beer_name: entry.beerName,
       price: entry.price,
+      size: entry.size,
       rating: entry.rating,
       photo_url: photoUrl,
+      country_code,
+      country_name,
     });
     if (error) throw error;
     loadProfileStats();
@@ -1373,26 +1717,33 @@ async function saveBeerEntryInBackground(entry) {
  *  Live activity feed: a Twitch-chat-style ticker, pinned just above
  *  the "Add my beer" button (see #beer-feed in style.css), that
  *  broadcasts what everyone using the app is doing right now:
- *    "[user] added a new beer"
+ *    "[user] added a new beer!"
  *    "[country] discovered! First beer added there!"
- *    "[user] is now first on ranking"
- *  Driven by a Supabase Realtime subscription on beer_entries inserts
- *  — every connected client (including the one who just logged the
- *  beer) gets the same event, so the feed is the same for everyone.
+ *    "[user] is now first worldwide!"
+ *    "[user] just logged their first beer!"
+ *    "[bar name] discovered! First beer added there!"
+ *    "[user] just hit [N] beers!"
+ *    "[N] beers logged worldwide!"
+ *    "[user] just claimed [bar name]!"
+ *    "[user] took the [country] throne!"
+ *
+ *  All of that is now computed SERVER-SIDE, by a Postgres trigger on
+ *  beer_entries (see feed_events_migration.sql) that writes one row
+ *  per event into a `feed_events` table. The client's only job here
+ *  is to subscribe to Realtime INSERTs on that table and render them
+ *  — no more re-tallying leaderboards, re-geocoding history, or
+ *  keeping local "known countries" state on every single client.
  * ---------------------------------------------------------------- */
 
 const beerFeedEl = document.getElementById("beer-feed");
 const BEER_FEED_ITEM_LIFETIME_MS = 6500;
 const BEER_FEED_MAX_ITEMS = 30; // safety cap on DOM nodes, well above what's ever visible
 
-let beerFeedProfileCache = {}; // user_id -> { username, avatar_emoji } | null
-let beerFeedKnownCountryCodes = new Set();
-let beerFeedTopUserId = null;
-let beerFeedSeeded = false;
+let beerFeedProfileCache = {}; // user_id -> { username } | null
 
 // Builds a message out of plain-text segments (some bolded) without
-// ever touching innerHTML — usernames are free text the person chose
-// themselves, so this keeps the feed safe from markup injection.
+// ever touching innerHTML — usernames/bar names are free text people
+// chose themselves, so this keeps the feed safe from markup injection.
 function buildFeedMessageNode(segments) {
   const frag = document.createDocumentFragment();
   segments.forEach(([text, strong]) => {
@@ -1409,6 +1760,13 @@ function buildFeedMessageNode(segments) {
 
 function pushBeerFeedMessage(segments, { milestone = false } = {}) {
   if (!beerFeedEl) return;
+
+  // The panel itself fades/slides up once, the first time it has
+  // anything to show — individual items just appear instantly after
+  // that, so a long-running feed with many lines doesn't feel noisy.
+  if (!beerFeedEl.classList.contains("is-active")) {
+    beerFeedEl.classList.add("is-active");
+  }
 
   while (beerFeedEl.children.length >= BEER_FEED_MAX_ITEMS) {
     beerFeedEl.removeChild(beerFeedEl.firstElementChild);
@@ -1437,7 +1795,7 @@ async function getBeerFeedProfile(userId) {
   try {
     const { data, error } = await supabaseClient
       .from("profiles")
-      .select("username, avatar_emoji")
+      .select("username")
       .eq("id", userId)
       .single();
     if (error) throw error;
@@ -1454,195 +1812,169 @@ function beerFeedDisplayName(profile) {
   return (profile && profile.username) || "Beer Explorer";
 }
 
-// Seeds the countries the feed already knows about (so it doesn't
-// re-announce a country on the very first entry it happens to see)
-// and today's #1 user, both from the busiest existing entries — same
-// bounded, busiest-bucket-first approach as the leaderboard/profile
-// map use, so a big table doesn't mean hammering Nominatim on load.
-const BEER_FEED_SEED_GEOCODE_LIMIT = 40;
-
-async function seedBeerFeedKnownCountries() {
-  try {
-    const { data, error } = await supabaseClient
-      .from("beer_entries")
-      .select("bar_lat, bar_lng")
-      .not("bar_lat", "is", null)
-      .not("bar_lng", "is", null);
-    if (error) throw error;
-
-    const bucketCounts = {};
-    const bucketCoords = {};
-    (data || []).forEach((row) => {
-      const lat = Number(row.bar_lat);
-      const lng = Number(row.bar_lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-      const key = roundCoordKey(lat, lng);
-      bucketCounts[key] = (bucketCounts[key] || 0) + 1;
-      if (!bucketCoords[key]) bucketCoords[key] = { lat, lng };
-    });
-
-    const busiestBuckets = topTallyEntries(bucketCounts, BEER_FEED_SEED_GEOCODE_LIMIT);
-    const cache = loadGeocodeCache();
-    let cacheDirty = false;
-
-    for (const [key] of busiestBuckets) {
-      let resolved = cache[key];
-      if (!resolved || resolved.country_code === undefined) {
-        const { lat, lng } = bucketCoords[key];
-        try {
-          resolved = await reverseGeocodePlace(lat, lng);
-        } catch (err) {
-          resolved = { city: null, country: null, country_code: null };
-        }
-        cache[key] = resolved;
-        cacheDirty = true;
-        await new Promise((resolve) => setTimeout(resolve, 350));
-      }
-      if (resolved.country_code) beerFeedKnownCountryCodes.add(resolved.country_code.toUpperCase());
+// Turns one feed_events row into the segments pushBeerFeedMessage
+// wants, plus whether it should render with the "milestone" style.
+// This is purely presentational — every decision about *whether* an
+// event happened (first in a country, milestone reached, claim
+// changed, ...) was already made server-side by the trigger.
+async function buildFeedEventDisplay(row) {
+  switch (row.event_type) {
+    case "new_beer": {
+      const profile = await getBeerFeedProfile(row.actor_id);
+      return {
+        segments: [
+          [beerFeedDisplayName(profile), true],
+          [" added a new beer!", false],
+        ],
+      };
     }
-
-    if (cacheDirty) saveGeocodeCache(cache);
-  } catch (err) {
-    console.warn("Beer feed: failed to seed known countries:", err);
-  }
-}
-
-async function seedBeerFeedTopUser() {
-  try {
-    const { data, error } = await supabaseClient.from("beer_entries").select("user_id").not("user_id", "is", null);
-    if (error) throw error;
-    const tally = {};
-    (data || []).forEach((row) => {
-      tally[row.user_id] = (tally[row.user_id] || 0) + 1;
-    });
-    const top = topTallyEntries(tally, 1);
-    beerFeedTopUserId = top.length ? top[0][0] : null;
-  } catch (err) {
-    console.warn("Beer feed: failed to seed top user:", err);
-  }
-}
-
-// Reverse-geocodes a fresh entry's coordinates (reusing the shared
-// geocode cache) and, if it's this app's first-ever entry in that
-// country, announces it.
-async function checkBeerFeedCountryDiscovered(lat, lng) {
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-  const key = roundCoordKey(lat, lng);
-  const cache = loadGeocodeCache();
-  let resolved = cache[key];
-  if (!resolved || resolved.country_code === undefined) {
-    try {
-      resolved = await reverseGeocodePlace(lat, lng);
-    } catch (err) {
-      return;
+    case "first_beer": {
+      const profile = await getBeerFeedProfile(row.actor_id);
+      return {
+        segments: [
+          [beerFeedDisplayName(profile), true],
+          [" just logged their first beer!", false],
+        ],
+        milestone: true,
+      };
     }
-    cache[key] = resolved;
-    saveGeocodeCache(cache);
+    case "country_discovered": {
+      return {
+        segments: [
+          [row.country_name || "A new country", true],
+          [" discovered! First beer added there!", false],
+        ],
+        milestone: true,
+      };
+    }
+    case "bar_discovered": {
+      return {
+        segments: [
+          [row.bar_name || "A new bar", true],
+          [" discovered! First beer added there!", false],
+        ],
+        milestone: true,
+      };
+    }
+    case "user_milestone": {
+      const profile = await getBeerFeedProfile(row.actor_id);
+      return {
+        segments: [
+          [beerFeedDisplayName(profile), true],
+          [` just hit ${row.milestone_count} beers!`, false],
+        ],
+        milestone: true,
+      };
+    }
+    case "global_milestone": {
+      return {
+        segments: [
+          [String(row.milestone_count), true],
+          [" beers logged worldwide!", false],
+        ],
+        milestone: true,
+      };
+    }
+    case "worldwide_first": {
+      const profile = await getBeerFeedProfile(row.actor_id);
+      return {
+        segments: [
+          [beerFeedDisplayName(profile), true],
+          [" is now first worldwide!", false],
+        ],
+        milestone: true,
+      };
+    }
+    case "bar_claimed": {
+      const profile = await getBeerFeedProfile(row.actor_id);
+      return {
+        segments: [
+          [beerFeedDisplayName(profile), true],
+          [` just claimed ${row.bar_name}!`, false],
+        ],
+        milestone: true,
+      };
+    }
+    case "country_throne": {
+      const profile = await getBeerFeedProfile(row.actor_id);
+      return {
+        segments: [
+          [beerFeedDisplayName(profile), true],
+          [` took the ${row.country_name} throne!`, false],
+        ],
+        milestone: true,
+      };
+    }
+    default:
+      return null;
   }
-  if (!resolved.country_code) return;
-  const code = resolved.country_code.toUpperCase();
-  if (beerFeedKnownCountryCodes.has(code)) return;
-  beerFeedKnownCountryCodes.add(code);
-  pushBeerFeedMessage(
-    [
-      [resolved.country || code, true],
-      [" discovered! First beer added there!", false],
-    ],
-    { milestone: true }
-  );
 }
 
-// Recomputes the all-time #1 by entry count and announces it only
-// when the top user actually changed.
-async function checkBeerFeedRankingChange() {
-  try {
-    const { data, error } = await supabaseClient.from("beer_entries").select("user_id").not("user_id", "is", null);
-    if (error) throw error;
-    const tally = {};
-    (data || []).forEach((row) => {
-      tally[row.user_id] = (tally[row.user_id] || 0) + 1;
-    });
-    const top = topTallyEntries(tally, 1);
-    if (!top.length) return;
-    const [newTopId] = top[0];
-    if (newTopId === beerFeedTopUserId) return;
-    beerFeedTopUserId = newTopId;
-    const profile = await getBeerFeedProfile(newTopId);
-    pushBeerFeedMessage(
-      [
-        [beerFeedDisplayName(profile), true],
-        [" is now first on ranking", false],
-      ],
-      { milestone: true }
-    );
-  } catch (err) {
-    console.warn("Beer feed: failed to check ranking change:", err);
-  }
-}
-
-async function handleBeerFeedInsert(payload) {
+async function handleFeedEventInsert(payload) {
   const row = payload && payload.new;
   if (!row) return;
-
-  const profile = await getBeerFeedProfile(row.user_id);
-  pushBeerFeedMessage([
-    [beerFeedDisplayName(profile), true],
-    [" added a new beer", false],
-  ]);
-
-  const lat = Number(row.bar_lat);
-  const lng = Number(row.bar_lng);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) {
-    checkBeerFeedCountryDiscovered(lat, lng);
-  }
-  checkBeerFeedRankingChange();
+  const display = await buildFeedEventDisplay(row);
+  if (!display) return;
+  pushBeerFeedMessage(display.segments, { milestone: Boolean(display.milestone) });
 }
 
-async function initBeerFeed() {
-  if (!beerFeedEl || beerFeedSeeded) return;
-  beerFeedSeeded = true;
-
-  await Promise.all([seedBeerFeedKnownCountries(), seedBeerFeedTopUser()]);
+function initBeerFeed() {
+  if (!beerFeedEl) return;
 
   supabaseClient
-    .channel("beer-feed")
-    .on("postgres_changes", { event: "INSERT", schema: "public", table: "beer_entries" }, handleBeerFeedInsert)
-    .subscribe();
+    .channel("feed-events")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "feed_events" }, handleFeedEventInsert)
+    .subscribe((status, err) => {
+      // If this never logs SUBSCRIBED, the feed will look empty even
+      // when beers are being added — almost always because the
+      // feed_events table hasn't been added to Supabase's realtime
+      // publication yet (run feed_events_migration.sql, or toggle it
+      // on under Database -> Replication in the dashboard).
+      console.log("Beer feed realtime status:", status, err || "");
+    });
 }
 
 initBeerFeed();
 
 /* ---------------------------------------------------------------- *
  *  Profile: top-right button opens a bottom drawer with the signed-in
- *  (anonymous) user's avatar, name, and stats. Avatar/name edits save
- *  straight to Supabase (profiles is owner-writable via RLS).
+ *  (anonymous) user's name and stats. The avatar is a single fixed
+ *  icon for everyone (not customizable). Name edits save straight to
+ *  Supabase (profiles is owner-writable via RLS).
  * ---------------------------------------------------------------- */
-
-const AVATAR_OPTIONS = ["🍺", "🍻", "🍷", "🥂", "🍹", "🌍", "😎", "🎉"];
 
 const menuBtn = document.getElementById("menu-btn");
 const menuBtnIcon = document.getElementById("menu-btn-icon");
 const menuPanelList = document.getElementById("menu-panel-list");
 const menuItemHome = document.getElementById("menu-item-home");
 const menuItemProfile = document.getElementById("menu-item-profile");
-const menuItemSettings = document.getElementById("menu-item-settings");
 const menuItemBattlefield = document.getElementById("menu-item-battlefield");
 const menuItemStats = document.getElementById("menu-item-stats");
 const menuPopoverIcons = Array.from(document.querySelectorAll(".menu-popover-icon[data-icon-kind]"));
-const menuProfileAvatarEmojiEl = document.getElementById("menu-profile-avatar-emoji");
+const menuPopoverItems = Array.from(document.querySelectorAll(".menu-popover-item[data-icon-kind]"));
 const profileSheetBackdrop = document.getElementById("profile-sheet-backdrop");
 const profileSheet = document.getElementById("profile-sheet");
-const profileAvatarBtn = document.getElementById("profile-avatar-btn");
-const profileAvatarEmojiEl = document.getElementById("profile-avatar-emoji");
-const profileAvatarPicker = document.getElementById("profile-avatar-picker");
+const profileBackBtn = document.getElementById("profile-back-btn");
 const profileUsernameInput = document.getElementById("profile-username-input");
 const profileStatCountEl = document.getElementById("profile-stat-count");
 const profileStatSinceEl = document.getElementById("profile-stat-since");
+const profileStatSpendEl = document.getElementById("profile-stat-spend");
+const profileStatLitresEl = document.getElementById("profile-stat-litres");
 const profileFavoriteEl = document.getElementById("profile-favorite");
 const profileStatusEl = document.getElementById("profile-status");
 
+// Hides the top-left schedule/time-range button while a drawer opened
+// from the menu popover (Profil, Stats, Battlefield) is open — "Add
+// my beer" isn't reached from that popover, so it's left alone.
+function setScheduleButtonVisible(visible) {
+  if (!counterRangePanel) return;
+  counterRangePanel.classList.toggle("is-hidden", !visible);
+}
+
+
 function openProfileSheet() {
   closeOtherSheets(profileSheet);
+  setScheduleButtonVisible(false);
   profileSheetBackdrop.hidden = false;
   profileSheet.hidden = false;
   requestAnimationFrame(() => {
@@ -1652,13 +1984,13 @@ function openProfileSheet() {
     });
   });
 
-  profileAvatarPicker.hidden = true;
   renderProfile();
   loadProfileStats();
   refreshProfileMapCoverage();
 }
 
 function closeProfileSheet() {
+  setScheduleButtonVisible(true);
   profileSheetBackdrop.classList.remove("is-open");
   profileSheet.classList.remove("is-open");
   const onTransitionEnd = () => {
@@ -1671,11 +2003,11 @@ function closeProfileSheet() {
 
 /* ---------------------------------------------------------------- *
  *  Menu popover: tapping the menu button opens a small on-the-spot
- *  menu (not a full sheet) with four items — "Home" recenters the
- *  globe and closes any open drawer; "Profil"/"Paramètre" both open
- *  the existing profile/account drawer below; "Battlefield" isn't
- *  wired to anything yet. Whichever item was tapped last becomes the
- *  menu button's own icon, so the button always reflects where you
+ *  menu (not a full sheet) with items — "Home" recenters the globe
+ *  and closes any open drawer; "Profil" opens the profile drawer;
+ *  "Battlefield" isn't wired to anything yet. Whichever item was
+ *  tapped last becomes the menu button's own icon and gets a solid
+ *  pill background in the popover, so both reflect where you
  *  currently are.
  * ---------------------------------------------------------------- */
 
@@ -1684,7 +2016,7 @@ function closeProfileSheet() {
 // variable font's FILL axis (see .is-active in style.css).
 const MENU_ICON_NAME_BY_KIND = {
   home: "home",
-  settings: "settings",
+  profile: "person",
   stats: "bar_chart",
   battlefield: "flag",
 };
@@ -1696,27 +2028,20 @@ let activeMenuIcon = "home";
 
 function renderMenuButtonIcon() {
   if (!menuBtnIcon) return;
-  if (activeMenuIcon === "profile") {
-    // "Profil" swaps the button to the avatar emoji rather than an
-    // icon glyph — "Paramètre" keeps its own gear icon.
-    menuBtnIcon.innerHTML = `<span class="menu-btn-avatar" aria-hidden="true">${(currentProfile && currentProfile.avatar_emoji) || "🍺"}</span>`;
-  } else {
-    const iconName = MENU_ICON_NAME_BY_KIND[activeMenuIcon] || MENU_ICON_NAME_BY_KIND.home;
-    menuBtnIcon.innerHTML = `<span class="material-symbols-rounded is-filled" aria-hidden="true">${iconName}</span>`;
-  }
+  const iconName = MENU_ICON_NAME_BY_KIND[activeMenuIcon] || MENU_ICON_NAME_BY_KIND.home;
+  menuBtnIcon.innerHTML = `<span class="material-symbols-rounded is-filled" aria-hidden="true">${iconName}</span>`;
   updateMenuPopoverActiveIcons();
 }
 
 // Fills in whichever popover item's icon matches the current active
-// section (outlined the rest of the time). "Profil" and "Paramètre"
-// share the same drawer, so both light up together.
+// section (outlined the rest of the time), and drops a solid pill
+// behind that same item's row.
 function updateMenuPopoverActiveIcons() {
   menuPopoverIcons.forEach((icon) => {
-    const kind = icon.dataset.iconKind;
-    const isActive =
-      kind === activeMenuIcon ||
-      (kind === "settings" && activeMenuIcon === "profile");
-    icon.classList.toggle("is-active", isActive);
+    icon.classList.toggle("is-active", icon.dataset.iconKind === activeMenuIcon);
+  });
+  menuPopoverItems.forEach((item) => {
+    item.classList.toggle("is-active", item.dataset.iconKind === activeMenuIcon);
   });
 }
 
@@ -1793,12 +2118,6 @@ menuItemProfile.addEventListener("click", () => {
   openProfileSheet();
 });
 
-menuItemSettings.addEventListener("click", () => {
-  closeMenuList();
-  setActiveMenuIcon("settings");
-  openProfileSheet();
-});
-
 menuItemStats.addEventListener("click", () => {
   closeMenuList();
   setActiveMenuIcon("stats");
@@ -1811,6 +2130,10 @@ menuItemBattlefield.addEventListener("click", () => {
   openBattlefieldSheet();
 });
 profileSheetBackdrop.addEventListener("click", closeProfileSheet);
+profileBackBtn.addEventListener("click", () => {
+  closeProfileSheet();
+  setActiveMenuIcon("home");
+});
 
 // Fills in avatar/name/member-since from whatever's currently cached
 // in currentProfile (populated by loadProfile() on sign-in).
@@ -1825,8 +2148,6 @@ function renderProfile() {
 
   profileStatusEl.hidden = true;
   profileStatusEl.classList.remove("field-hint-error");
-  profileAvatarEmojiEl.textContent = currentProfile.avatar_emoji || "🍺";
-  if (menuProfileAvatarEmojiEl) menuProfileAvatarEmojiEl.textContent = currentProfile.avatar_emoji || "🍺";
   if (activeMenuIcon === "profile") renderMenuButtonIcon();
   profileUsernameInput.value = currentProfile.username || "";
 
@@ -1844,23 +2165,34 @@ async function loadProfileStats() {
   try {
     const { data, error, count } = await supabaseClient
       .from("beer_entries")
-      .select("beer_name", { count: "exact" })
+      .select("beer_name, price", { count: "exact" })
       .eq("user_id", currentUser.id);
     if (error) throw error;
 
     profileStatCountEl.textContent = typeof count === "number" ? count.toLocaleString("en-US") : "0";
 
     const tally = {};
+    let totalSpend = 0;
     (data || []).forEach((row) => {
-      if (!row.beer_name) return;
-      tally[row.beer_name] = (tally[row.beer_name] || 0) + 1;
+      if (row.beer_name) tally[row.beer_name] = (tally[row.beer_name] || 0) + 1;
+      if (typeof row.price === "number") totalSpend += row.price;
     });
     const favorite = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0];
     profileFavoriteEl.hidden = !favorite;
     if (favorite) profileFavoriteEl.textContent = `Favorite beer: ${favorite}`;
+
+    profileStatSpendEl.textContent = `$${totalSpend.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+
+    // beer_entries has no volume/serving-size column, so "litres drunk"
+    // is an estimate: one logged beer = a standard 0.5L serving. Swap
+    // this out for a real sum once/if a volume field gets added.
+    const litres = (typeof count === "number" ? count : 0) * 0.5;
+    profileStatLitresEl.textContent = `${litres.toLocaleString("en-US", { maximumFractionDigits: 1 })}L`;
   } catch (err) {
     console.error("Failed to load profile stats:", err);
     profileStatCountEl.textContent = "–";
+    profileStatSpendEl.textContent = "–";
+    profileStatLitresEl.textContent = "–";
   }
 }
 
@@ -1883,35 +2215,6 @@ async function saveProfileField(patch) {
     profileStatusEl.textContent = "Couldn't save — try again.";
   }
 }
-
-function renderAvatarPicker() {
-  profileAvatarPicker.innerHTML = "";
-  AVATAR_OPTIONS.forEach((emoji) => {
-    const isSelected = Boolean(currentProfile && currentProfile.avatar_emoji === emoji);
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "chip profile-avatar-option" + (isSelected ? " is-selected" : "");
-    chip.textContent = emoji;
-    chip.setAttribute("role", "radio");
-    chip.setAttribute("aria-checked", isSelected ? "true" : "false");
-    chip.addEventListener("click", () => selectAvatar(emoji));
-    profileAvatarPicker.appendChild(chip);
-  });
-}
-
-async function selectAvatar(emoji) {
-  profileAvatarEmojiEl.textContent = emoji;
-  if (menuProfileAvatarEmojiEl) menuProfileAvatarEmojiEl.textContent = emoji;
-  if (activeMenuIcon === "profile") renderMenuButtonIcon();
-  profileAvatarPicker.hidden = true;
-  await saveProfileField({ avatar_emoji: emoji });
-}
-
-profileAvatarBtn.addEventListener("click", () => {
-  const opening = profileAvatarPicker.hidden;
-  if (opening) renderAvatarPicker();
-  profileAvatarPicker.hidden = !opening;
-});
 
 async function saveUsername() {
   const value = profileUsernameInput.value.trim();
@@ -2209,6 +2512,7 @@ const leaderboardPanels = Array.from(document.querySelectorAll(".leaderboard-pan
 
 function openStatsSheet() {
   closeOtherSheets(statsSheet);
+  setScheduleButtonVisible(false);
   statsSheetBackdrop.hidden = false;
   statsSheet.hidden = false;
   requestAnimationFrame(() => {
@@ -2223,6 +2527,7 @@ function openStatsSheet() {
 }
 
 function closeStatsSheet() {
+  setScheduleButtonVisible(true);
   statsSheetBackdrop.classList.remove("is-open");
   statsSheet.classList.remove("is-open");
   const onTransitionEnd = () => {
@@ -2233,8 +2538,15 @@ function closeStatsSheet() {
   statsSheet.addEventListener("transitionend", onTransitionEnd);
 }
 
-beerCounterEl.addEventListener("click", openStatsSheet);
+beerCounterEl.addEventListener("click", () => {
+  setActiveMenuIcon("stats");
+  openStatsSheet();
+});
 statsSheetBackdrop.addEventListener("click", closeStatsSheet);
+document.getElementById("stats-back-btn").addEventListener("click", () => {
+  closeStatsSheet();
+  setActiveMenuIcon("home");
+});
 
 // Fetches every entry's lightweight fields and tallies them client-side
 // — simplest approach while the table stays small; swap for a Postgres
@@ -2430,7 +2742,7 @@ async function computeUsersLeaderboard(cutoffIso) {
   const ids = top.map(([id]) => id);
   const { data: profiles, error: profilesError } = await supabaseClient
     .from("profiles")
-    .select("id, username, avatar_emoji")
+    .select("id, username")
     .in("id", ids);
   if (profilesError) throw profilesError;
 
@@ -2443,7 +2755,7 @@ async function computeUsersLeaderboard(cutoffIso) {
     const profile = profileById[id];
     return {
       name: (profile && profile.username) || "Beer Explorer",
-      emoji: (profile && profile.avatar_emoji) || "🍺",
+      emoji: "🍺",
       count,
       isYou: Boolean(currentUser && currentUser.id === id),
     };
@@ -2451,18 +2763,34 @@ async function computeUsersLeaderboard(cutoffIso) {
 }
 
 async function computeVenuesLeaderboard(cutoffIso) {
-  let query = supabaseClient.from("beer_entries").select("bar_name, created_at").not("bar_name", "is", null);
+  let query = supabaseClient.from("beer_entries").select("venue_id, created_at").not("venue_id", "is", null);
   if (cutoffIso) query = query.gte("created_at", cutoffIso);
   const { data, error } = await query;
   if (error) throw error;
 
   const tally = {};
   (data || []).forEach((row) => {
-    const name = (row.bar_name || "").trim();
-    if (!name) return;
-    tally[name] = (tally[name] || 0) + 1;
+    tally[row.venue_id] = (tally[row.venue_id] || 0) + 1;
   });
-  return topTallyEntries(tally, LEADERBOARD_TOP_N).map(([name, count]) => ({ name, count }));
+  const top = topTallyEntries(tally, LEADERBOARD_TOP_N);
+  if (!top.length) return [];
+
+  const ids = top.map(([id]) => id);
+  const { data: venues, error: venuesError } = await supabaseClient
+    .from("venues")
+    .select("id, name")
+    .in("id", ids);
+  if (venuesError) throw venuesError;
+
+  const venueById = {};
+  (venues || []).forEach((v) => {
+    venueById[v.id] = v;
+  });
+
+  return top.map(([id, count]) => ({
+    name: (venueById[id] && venueById[id].name) || "Unknown bar",
+    count,
+  }));
 }
 
 async function computeBeerLeaderboard(cutoffIso) {
@@ -2601,7 +2929,8 @@ async function computePlacesLeaderboard(scope, cutoffIso) {
  *  A country or bar is "claimed" by whoever has logged the most
  *  beers there. "Me" lists claims the signed-in user currently
  *  holds; "Other" lists claims held by anyone else, with who holds
- *  each one. Bars come straight off beer_entries' bar_name; countries
+ *  each one. Bars are grouped by beer_entries.venue_id (resolved to a
+ *  venue name via the venues table); countries
  *  reuse the same bucket + reverse-geocode + cache approach as the
  *  stats leaderboard above. The two category cards act as a tiny
  *  two-slide carousel — tapping either swaps the list beneath them.
@@ -2628,6 +2957,7 @@ let battlefieldRequestId = 0; // guards against a slow, stale load clobbering a 
 
 function openBattlefieldSheet() {
   closeOtherSheets(battlefieldSheet);
+  setScheduleButtonVisible(false);
   battlefieldSheetBackdrop.hidden = false;
   battlefieldSheet.hidden = false;
   requestAnimationFrame(() => {
@@ -2641,6 +2971,7 @@ function openBattlefieldSheet() {
 }
 
 function closeBattlefieldSheet() {
+  setScheduleButtonVisible(true);
   battlefieldSheetBackdrop.classList.remove("is-open");
   battlefieldSheet.classList.remove("is-open");
   const onTransitionEnd = () => {
@@ -2652,6 +2983,10 @@ function closeBattlefieldSheet() {
 }
 
 battlefieldSheetBackdrop.addEventListener("click", closeBattlefieldSheet);
+document.getElementById("battlefield-back-btn").addEventListener("click", () => {
+  closeBattlefieldSheet();
+  setActiveMenuIcon("home");
+});
 
 battlefieldCards.forEach((card) => {
   card.addEventListener("click", () => {
@@ -2722,21 +3057,20 @@ function renderBattlefieldList() {
   });
 }
 
-// Tallies bar-name claims (no geocoding needed) into a flat list, one
-// entry per bar, each carrying whichever user logged the most beers
-// there and that winning count.
+// Tallies venue claims (one entry per distinct venue, keyed by
+// venue_id rather than the free-text bar name), each carrying
+// whichever user logged the most beers there and that winning count.
 function tallyBarClaims(rows) {
-  const byBar = {}; // bar name -> { userId -> count }
+  const byVenue = {}; // venue_id -> { userId -> count }
   rows.forEach((row) => {
-    const name = (row.bar_name || "").trim();
-    if (!name || !row.user_id) return;
-    if (!byBar[name]) byBar[name] = {};
-    byBar[name][row.user_id] = (byBar[name][row.user_id] || 0) + 1;
+    if (!row.venue_id || !row.user_id) return;
+    if (!byVenue[row.venue_id]) byVenue[row.venue_id] = {};
+    byVenue[row.venue_id][row.user_id] = (byVenue[row.venue_id][row.user_id] || 0) + 1;
   });
 
-  return Object.entries(byBar).map(([name, byUser]) => {
+  return Object.entries(byVenue).map(([venueId, byUser]) => {
     const [claimantId, count] = Object.entries(byUser).sort((a, b) => b[1] - a[1])[0];
-    return { type: "bar", name, claimantId, count };
+    return { type: "bar", venueId, claimantId, count };
   });
 }
 
@@ -2810,7 +3144,7 @@ async function loadBattlefield() {
   battlefieldStatusEl.textContent = "Loading…";
 
   try {
-    const { data, error } = await supabaseClient.from("beer_entries").select("user_id, bar_name, bar_lat, bar_lng");
+    const { data, error } = await supabaseClient.from("beer_entries").select("user_id, venue_id, bar_lat, bar_lng");
     if (error) throw error;
     const rows = data || [];
 
@@ -2818,14 +3152,34 @@ async function loadBattlefield() {
     const countryClaims = await tallyCountryClaims(rows);
     if (requestId !== battlefieldRequestId) return; // superseded by a later open
 
-    const allClaims = [...countryClaims, ...barClaims].sort((a, b) => b.count - a.count);
+    const venueIds = Array.from(new Set(barClaims.map((c) => c.venueId)));
+    const venueById = {};
+    if (venueIds.length) {
+      const { data: venues, error: venuesError } = await supabaseClient
+        .from("venues")
+        .select("id, name")
+        .in("id", venueIds);
+      if (venuesError) throw venuesError;
+      (venues || []).forEach((v) => {
+        venueById[v.id] = v;
+      });
+    }
+
+    const resolvedBarClaims = barClaims.map((c) => ({
+      type: c.type,
+      name: (venueById[c.venueId] && venueById[c.venueId].name) || "Unknown bar",
+      claimantId: c.claimantId,
+      count: c.count,
+    }));
+
+    const allClaims = [...countryClaims, ...resolvedBarClaims].sort((a, b) => b.count - a.count);
 
     const claimantIds = Array.from(new Set(allClaims.map((c) => c.claimantId)));
     const profileById = {};
     if (claimantIds.length) {
       const { data: profiles, error: profilesError } = await supabaseClient
         .from("profiles")
-        .select("id, username, avatar_emoji")
+        .select("id, username")
         .in("id", claimantIds);
       if (profilesError) throw profilesError;
       (profiles || []).forEach((p) => {
@@ -2843,7 +3197,7 @@ async function loadBattlefield() {
         name: claim.name,
         count: claim.count,
         claimantName: (profile && profile.username) || "Beer Explorer",
-        claimantEmoji: (profile && profile.avatar_emoji) || "🍺",
+        claimantEmoji: "🍺",
       };
       (isMe ? me : other).push(entry);
     });

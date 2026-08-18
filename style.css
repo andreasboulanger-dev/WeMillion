@@ -158,6 +158,16 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
+  opacity: 1;
+  transition: opacity 0.15s ease;
+}
+
+/* Hidden while a drawer opened from the menu popover (Profil / Stats
+   / Battlefield) is open — "Add my beer" isn't reached from that
+   popover, so it leaves this button alone. */
+.counter-range-panel.is-hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Long pill, same frosted-glass treatment as the menu button/list.
@@ -309,15 +319,17 @@ html, body {
 
 #add-beer-btn {
   position: absolute;
-  left: 50%;
+  left: calc(16px + env(safe-area-inset-left));
+  right: calc(16px + env(safe-area-inset-right));
   bottom: calc(20px + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  max-width: 480px;
+  margin: 0 auto;
   z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 56px;
-  padding: 0 64px;
+  padding: 0 24px;
   border: none;
   border-radius: 999px;
   background: #ffdb7a;
@@ -330,7 +342,7 @@ html, body {
 }
 
 #add-beer-btn:active {
-  transform: translateX(-50%) scale(0.96);
+  transform: scale(0.98);
 }
 
 #add-beer-btn:focus-visible {
@@ -354,7 +366,7 @@ html, body {
   position: absolute;
   left: 50%;
   bottom: calc(88px + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(10px);
   z-index: 8;
   width: min(94vw, 380px);
   max-height: calc(50vh - 88px - env(safe-area-inset-bottom));
@@ -365,8 +377,19 @@ html, body {
   gap: 6px;
   overflow: hidden;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px);
   mask-image: linear-gradient(to bottom, transparent, #000 28px);
+}
+
+/* Toggled once in JS the first time a message is pushed — the whole
+   feed fades/slides up as a unit rather than each line animating on
+   its own, since with many lines that reads as noisy. Items added
+   after this appear instantly; only the panel itself animates. */
+.beer-feed.is-active {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .beer-feed-item {
@@ -383,9 +406,6 @@ html, body {
   text-align: center;
   word-break: break-word;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-  opacity: 0;
-  transform: translateY(10px) scale(0.96);
-  animation: beer-feed-item-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .beer-feed-item strong {
@@ -402,17 +422,6 @@ html, body {
 
 .beer-feed-item.is-leaving {
   animation: beer-feed-item-out 0.28s ease forwards;
-}
-
-@keyframes beer-feed-item-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
 }
 
 @keyframes beer-feed-item-out {
@@ -434,12 +443,144 @@ html, body {
   object-fit: cover;
   border-radius: 14px;
   display: block;
-  margin-bottom: 16px;
+  margin: 0 auto 16px;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 #beer-photo-thumb[hidden] {
   display: none;
+}
+
+/* ------------------------------------------------------------------ *
+ *  "Add my beer" drawer chrome: back (top-left) + close (top-right)
+ *  corner buttons, and the "Expert mode" toggle tucked right under
+ *  the close button. Unlike the full-screen drawers' back button,
+ *  these sit relative to the drawer itself (it's a content-sized
+ *  sheet anchored to the bottom, not a full-screen one) rather than
+ *  pinned to the viewport — position: absolute against the sheet's
+ *  own box, not fixed against the screen.
+ * ------------------------------------------------------------------ */
+
+.beer-sheet-back-btn {
+  position: absolute;
+  top: 27px;
+  left: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* Close button lives inline in the header row (pushed to the far
+   right via margin-left: auto) rather than absolutely positioned —
+   it's simpler and lands in the same top-right corner either way. */
+.beer-sheet-close-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+}
+
+.beer-sheet-back-btn .material-symbols-rounded,
+.beer-sheet-close-btn .material-symbols-rounded {
+  font-size: 24px;
+}
+
+.beer-sheet-back-btn:hover,
+.beer-sheet-back-btn:active,
+.beer-sheet-close-btn:hover,
+.beer-sheet-close-btn:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.beer-sheet-back-btn:active,
+.beer-sheet-close-btn:active {
+  transform: scale(0.94);
+}
+
+.beer-sheet-back-btn:focus-visible,
+.beer-sheet-close-btn:focus-visible {
+  outline: 2px solid #ffdb7a;
+  outline-offset: 2px;
+}
+
+/* Title sits between the two corner buttons — left padding clears
+   the absolutely-positioned back button, which the header's own flow
+   doesn't otherwise account for. */
+.beer-sheet-back-btn + .sheet-header {
+  padding-left: 50px;
+  margin-bottom: 6px;
+}
+
+.beer-expert-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.beer-expert-toggle {
+  border: none;
+  background: none;
+  padding: 4px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+  font: 600 12.5px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.beer-expert-toggle:hover {
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* Active state — same gold accent used for the selected price/star. */
+.beer-expert-toggle[aria-pressed="true"] {
+  color: #ffdb7a;
+  border-color: #ffdb7a;
+}
+
+.beer-expert-toggle:focus-visible {
+  outline: 2px solid #ffdb7a;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Beer / Price / Rating: collapsed by default so the drawer opens at
+   its smallest. The grid-template-rows 0fr->1fr trick animates to
+   "auto" height smoothly (a plain height/max-height transition can't
+   do that without guessing a fixed value), and since .bottom-sheet
+   itself has no explicit height, its content-driven size just
+   follows this box's growth/shrink frame by frame. */
+#beer-expert-fields {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.4s cubic-bezier(0.22, 0.61, 0.16, 1);
+}
+
+#beer-expert-fields.is-open {
+  grid-template-rows: 1fr;
+}
+
+.beer-expert-fields-inner {
+  overflow: hidden;
+  min-height: 0;
 }
 
 .field-optional {
@@ -487,6 +628,14 @@ html, body {
 
 .bottom-sheet.is-open {
   transform: translateY(0);
+}
+
+/* Beer sheet specifically: Expert mode (Beer / Price / Size / Rating)
+   can add a lot of content, so it's allowed to grow taller than the
+   ~78vh other sheets cap at before it falls back to scrolling
+   internally — still leaving a sliver of the map visible up top. */
+#beer-sheet {
+  max-height: min(92vh, calc(100vh - 24px));
 }
 
 /* While actively being dragged, the transition is switched off so the
@@ -543,29 +692,73 @@ html, body {
 .sheet-header {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  /* The menu button floats fixed at top-right (16px inset, 40px
-     wide) above every sheet — this padding keeps the right-aligned
-     title clear of it instead of rendering underneath. */
-  padding-right: 48px;
+  gap: 10px;
   margin-bottom: 18px;
+}
+
+/* Drawers with a back button (Profil / Stats / Battlefield): the
+   button is pinned to the fixed top-left corner spot (see
+   .sheet-back-btn below, same coordinates as .counter-range-panel's
+   schedule button), so it no longer takes up flow space here. The
+   header is pulled up and given a matching 40px height so the
+   title's vertical middle lines up exactly with the back button's
+   vertical middle — this sheet's padding-top (27px) minus 11px
+   equals the button's 16px top offset, and a 40px-tall, centered
+   header puts the title's middle at 16px + 20px, same as the
+   button's. Left padding clears the button + gap so the title never
+   sits under it. */
+.sheet-header:has(.sheet-back-btn) {
+  height: 40px;
+  margin-top: -11px;
+  padding-left: 50px;
 }
 
 .sheet-header h2 {
   font: 600 18px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  text-align: right;
-}
-
-/* "Add my beer" is the one drawer whose title sits on the left
-   instead of the right — the menu button it'd otherwise clear is on
-   the opposite side, so no extra padding is needed here. */
-#beer-sheet .sheet-header {
-  justify-content: flex-start;
-  padding-right: 0;
-}
-
-#beer-sheet .sheet-header h2 {
   text-align: left;
+}
+
+/* Back button: only present on drawers reached from the menu popover
+   (Profil / Stats / Battlefield) — "Add my beer" has no back button
+   since it isn't one of those destinations. Pinned to the exact same
+   fixed top-left spot as the schedule button (.counter-range-panel /
+   .counter-range-btn): same top/left offsets, same 40px size. Fixed
+   rather than flowed in the header so it stays put on screen while
+   the drawer's content scrolls underneath it. */
+.sheet-back-btn {
+  position: fixed;
+  top: calc(16px + env(safe-area-inset-top));
+  left: calc(16px + env(safe-area-inset-left));
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+}
+
+.sheet-back-btn .material-symbols-rounded {
+  font-size: 24px;
+}
+
+.sheet-back-btn:hover,
+.sheet-back-btn:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.sheet-back-btn:active {
+  transform: scale(0.94);
+}
+
+.sheet-back-btn:focus-visible {
+  outline: 2px solid #ffdb7a;
+  outline-offset: 2px;
 }
 
 .field-label {
@@ -723,6 +916,11 @@ html, body {
   /* Horizontal padding lets the first/last items scroll all the way
      to center; kept in sync with PRICE_ITEM_WIDTH in app.js. */
   padding: 0 calc(50% - 26px);
+  /* Restricts native touch scrolling to the horizontal axis only, so
+     an upward drag (used to open the cents fine-tune popover, see
+     app.js) is left for JS to handle instead of being swallowed as a
+     vertical scroll of the sheet behind it. */
+  touch-action: pan-x;
 }
 
 .price-wheel-item {
@@ -756,6 +954,53 @@ html, body {
   outline: 2px solid #ffdb7a;
   outline-offset: 2px;
   border-radius: 8px;
+}
+
+.price-wheel-item.is-fine-tuning {
+  color: #ffdb7a;
+}
+
+/* Cents fine-tune popover: a small vertical ".0"-".9" strip that
+   floats above whichever price item is being long-pressed or
+   dragged upward on (see the price-item pointer handlers in app.js).
+   Digits are appended 0->9 in the DOM but shown column-reverse so
+   dragging further up visually and logically moves to a higher
+   digit. */
+.price-decimal-popover {
+  position: fixed;
+  transform: translate(-50%, calc(-100% + 6px));
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  margin-top: -10px;
+  border-radius: 12px;
+  background: rgba(18, 21, 31, 0.95);
+  border: 1px solid rgba(255, 219, 122, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 500;
+}
+
+.price-decimal-popover.is-open {
+  opacity: 1;
+  transform: translate(-50%, -100%);
+}
+
+.price-decimal-digit {
+  font: 600 12px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: rgba(255, 255, 255, 0.35);
+  padding: 2px 4px;
+  transition: color 0.1s ease, font-size 0.1s ease;
+}
+
+.price-decimal-digit.is-active {
+  color: #ffdb7a;
+  font-size: 15px;
+  font-weight: 800;
 }
 
 /* Center "slot" the dial reads against — same visual language as the
@@ -793,6 +1038,28 @@ html, body {
 .price-wheel-fade-right {
   right: 0;
   background: linear-gradient(to left, #12151f, rgba(18, 21, 31, 0));
+}
+
+/* Size: reuses the Price wheel's dial mechanics (.price-wheel,
+   .price-wheel-track, .price-wheel-fade) but needs wider slots to fit
+   multi-character labels like "24 crate" or "35.5cl". Width here must
+   stay in sync with SIZE_ITEM_WIDTH in app.js. */
+.size-wheel-track {
+  padding: 0 calc(50% - 39px);
+}
+
+.size-wheel-item {
+  flex: 0 0 78px;
+  width: 78px;
+  font-size: 14px;
+}
+
+.size-wheel-item.price-wheel-item-skip {
+  font-size: 20px;
+}
+
+.size-wheel-indicator {
+  width: 78px;
 }
 
 #rating-label {
@@ -842,16 +1109,28 @@ html, body {
   transform: scale(0.9);
 }
 
+/* Sticky rather than a normal flow element: when Expert mode's fields
+   push the sheet past its max-height (see #beer-sheet above) and it
+   falls back to scrolling internally, Save stays pinned to the bottom
+   of the visible area instead of requiring a scroll to reach it. When
+   everything already fits, this has no visible effect — the button
+   just sits in its normal end-of-form spot, which is also the bottom
+   of the sheet. The upward shadow reads as it floating over whatever
+   content is scrolled up underneath it. */
 #save-beer-btn {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
   width: 100%;
   margin-top: 22px;
   padding: 15px;
   border: none;
-  border-radius: 12px;
+  border-radius: 999px;
   background: #ffdb7a;
   color: #241a04;
   font: 600 15px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
+  box-shadow: 0 -16px 24px -6px rgba(18, 21, 31, 0.95);
 }
 
 #save-beer-btn:disabled {
@@ -884,7 +1163,7 @@ html, body {
   top: calc(16px + env(safe-area-inset-top));
   right: calc(16px + env(safe-area-inset-right));
   /* Above the bottom sheets (z-index 19–20) so it stays visible and
-     tappable even when the full-screen profile drawer is open. */
+     tappable even when a full-screen drawer is open. */
   z-index: 25;
   display: flex;
   flex-direction: column;
@@ -927,18 +1206,13 @@ html, body {
 
 /* Swappable icon slot inside the menu button — its content is
    replaced in JS to reflect whichever popover item was tapped last
-   (house / gear / avatar emoji / bar-chart / battlefield flag). */
+   (house / person / gear / bar-chart / battlefield flag). */
 .menu-btn-icon {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-}
-
-.menu-btn-avatar {
-  font-size: 20px;
-  line-height: 1;
 }
 
 .menu-icon-btn:active {
@@ -956,7 +1230,7 @@ html, body {
 .menu-panel-list {
   min-width: 168px;
   padding: 6px;
-  border-radius: 14px;
+  border-radius: 22px;
   background: rgba(18, 21, 31, 0.22);
   backdrop-filter: blur(10px) saturate(180%);
   -webkit-backdrop-filter: blur(10px) saturate(180%);
@@ -998,6 +1272,17 @@ html, body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Solid pill under whichever item is currently active (mirrors
+   activeMenuIcon in app.js), on top of the plain hover/press state.
+   border-radius is oversized on purpose — it clamps to a true
+   stadium/pill shape regardless of the item's height. */
+.menu-popover-item.is-active,
+.menu-popover-item.is-active:hover,
+.menu-popover-item.is-active:active {
+  background: rgba(255, 219, 122, 0.2);
+  border-radius: 999px;
+}
+
 .menu-popover-item:focus-visible {
   outline: 2px solid #ffdb7a;
   outline-offset: -2px;
@@ -1018,14 +1303,6 @@ html, body {
   color: #ffdb7a;
 }
 
-.menu-popover-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 19px;
-  line-height: 1;
-}
-
 #profile-avatar-row {
   display: flex;
   align-items: center;
@@ -1033,7 +1310,7 @@ html, body {
   margin-bottom: 16px;
 }
 
-#profile-avatar-btn {
+#profile-avatar-icon {
   flex-shrink: 0;
   width: 60px;
   height: 60px;
@@ -1041,15 +1318,10 @@ html, body {
   border: 1.5px solid rgba(255, 219, 122, 0.45);
   background: rgba(255, 219, 122, 0.1);
   font-size: 28px;
+  color: #ffdb7a;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-}
-
-#profile-avatar-btn:focus-visible {
-  outline: 2px solid #ffdb7a;
-  outline-offset: 2px;
 }
 
 #profile-username-group {
@@ -1076,24 +1348,14 @@ html, body {
   outline-offset: 1px;
 }
 
-#profile-avatar-picker {
-  margin-bottom: 18px;
-}
-
-.profile-avatar-option {
-  padding: 8px 12px;
-  font-size: 20px;
-  line-height: 1;
-}
-
 #profile-stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
   margin-bottom: 4px;
 }
 
 .profile-stat {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
