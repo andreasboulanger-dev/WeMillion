@@ -71,6 +71,49 @@
     <span id="beer-counter-remaining" aria-hidden="true"></span>
   </div>
 
+  <!-- Time-range control: icon-only button, pinned below the counter
+       on the left edge of the screen. Tapping it reveals a long pill
+       to its right with three segments (All time / Week / 24h); the
+       active segment is itself a draggable thumb, like an iOS
+       segmented control you can drag your thumb across instead of
+       only tapping. Filters both the counter above and the beer
+       lights on the globe. Icon button matches the top-right menu
+       button's frosted-glass look exactly (shared .menu-icon-btn). -->
+  <div id="counter-range-panel" class="counter-range-panel">
+    <button
+      id="counter-range-btn"
+      class="menu-icon-btn"
+      type="button"
+      aria-haspopup="true"
+      aria-expanded="false"
+      aria-label="Time range"
+    >
+      <span class="material-symbols-rounded" aria-hidden="true">schedule</span>
+    </button>
+
+    <div id="counter-range-track" class="counter-range-track" role="radiogroup" aria-label="Time range" hidden>
+      <span id="counter-range-thumb" class="counter-range-thumb" aria-hidden="true"></span>
+      <button type="button" class="counter-range-seg is-selected" data-range="all" role="radio" aria-checked="true" aria-label="All time">
+        <span class="counter-range-icon" aria-hidden="true">
+          <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
+          <span class="counter-range-icon-badge">&#8734;</span>
+        </span>
+      </button>
+      <button type="button" class="counter-range-seg" data-range="week" role="radio" aria-checked="false" aria-label="Week">
+        <span class="counter-range-icon" aria-hidden="true">
+          <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
+          <span class="counter-range-icon-badge">W</span>
+        </span>
+      </button>
+      <button type="button" class="counter-range-seg" data-range="24h" role="radio" aria-checked="false" aria-label="Last 24 hours">
+        <span class="counter-range-icon" aria-hidden="true">
+          <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
+          <span class="counter-range-icon-badge">24</span>
+        </span>
+      </button>
+    </div>
+  </div>
+
   <!-- CTA: triggers the camera below. capture="environment" opens the
        rear camera directly on mobile; falls back to a plain file picker
        on desktop. -->
@@ -98,10 +141,9 @@
       <img id="beer-photo-thumb" alt="Your beer photo" hidden />
 
       <div class="field-group">
-        <span class="field-label" id="nearby-label">Nearby <span id="nearby-optional-tag" class="field-optional">(optional)</span></span>
-        <div id="bar-chip-row" class="chip-row" role="radiogroup" aria-labelledby="nearby-label"></div>
-        <div id="bar-search" class="inline-search" hidden>
-          <input id="bar-search-input" type="text" placeholder="Search bars, restaurants, pubs, clubs…" autocomplete="off" />
+        <span class="field-label" id="bar-label">Bar</span>
+        <div id="bar-search" class="inline-search">
+          <input id="bar-search-input" type="text" placeholder="Type the name of the bar…" autocomplete="off" required />
           <ul id="bar-search-results" class="search-results"></ul>
         </div>
         <p id="bar-required-hint" class="field-hint" hidden></p>
@@ -169,6 +211,16 @@
         <span id="profile-stat-since" class="profile-stat-value">–</span>
         <span class="profile-stat-label">Member since</span>
       </div>
+    </div>
+
+    <div id="profile-map-card">
+      <span class="field-label" id="profile-map-label">Where you've been</span>
+      <div
+        id="profile-map"
+        role="button"
+        tabindex="0"
+        aria-label="Map of countries where you've logged a beer. Tap for your world coverage."
+      ></div>
     </div>
 
     <p id="profile-favorite" class="field-hint" hidden></p>
@@ -250,11 +302,52 @@
     </div>
   </div>
 
+  <!-- Battlefield drawer: opened from the menu's "Battlefield" item.
+       Two cards ("Me" / "Other") sit side by side like a tiny
+       carousel; tapping one swaps the list of claimed countries/bars
+       below it. A "claim" on a country or bar goes to whoever has
+       logged the most beers there. -->
+  <div id="battlefield-sheet-backdrop" class="sheet-backdrop" hidden></div>
+  <div id="battlefield-sheet" class="bottom-sheet bottom-sheet-full" role="dialog" aria-modal="true" aria-labelledby="battlefield-sheet-title" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+
+    <div class="sheet-header">
+      <h2 id="battlefield-sheet-title">Battlefield</h2>
+    </div>
+
+    <div id="battlefield-carousel" class="battlefield-carousel" role="tablist" aria-label="Battlefield category">
+      <button type="button" class="battlefield-card is-selected" id="battlefield-card-me" data-side="me" role="tab" aria-selected="true">
+        <span class="battlefield-card-icon" aria-hidden="true">🚩</span>
+        <span class="battlefield-card-count" id="battlefield-count-me">–</span>
+        <span class="battlefield-card-title">Me</span>
+      </button>
+      <button type="button" class="battlefield-card" id="battlefield-card-other" data-side="other" role="tab" aria-selected="false">
+        <span class="battlefield-card-icon" aria-hidden="true">⚔️</span>
+        <span class="battlefield-card-count" id="battlefield-count-other">–</span>
+        <span class="battlefield-card-title">Other</span>
+      </button>
+    </div>
+
+    <div id="battlefield-details">
+      <span class="field-label" id="battlefield-details-label">Your territory</span>
+      <ol id="battlefield-list" class="battlefield-list" aria-labelledby="battlefield-details-label"></ol>
+      <p id="battlefield-empty" class="field-hint" hidden></p>
+      <p id="battlefield-status" class="field-hint" hidden>Loading…</p>
+    </div>
+  </div>
+
   <!-- Fired right after Save: shows instantly (no network wait), then
        fades itself out a couple seconds later. -->
   <div id="legend-popup" class="legend-popup" role="status" aria-live="polite" hidden>
     <span class="legend-popup-emoji" aria-hidden="true">🍻</span>
     <span class="legend-popup-text">You're a Legend!</span>
+  </div>
+
+  <!-- Fired when the profile drawer's mini map is tapped: a small,
+       self-dismissing toast (not the big center-screen legend popup)
+       showing how much of the world's countries are covered so far. -->
+  <div id="profile-map-toast" class="mini-toast" role="status" aria-live="polite" hidden>
+    <span id="profile-map-toast-text"></span>
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@5.1.1/dist/maplibre-gl.js"></script>

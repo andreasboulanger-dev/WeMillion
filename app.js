@@ -36,6 +36,20 @@ const COUNTER_INCREMENT_DURATION_MS = 400;
 const beerCounterEl = document.getElementById("beer-counter-value");
 const beerCounterRemainingEl = document.getElementById("beer-counter-remaining");
 
+// Which window the counter (and the globe's beer lights) are currently
+// scoped to — changed via the dropdown below the counter. "all" mirrors
+// the original always-on behaviour; "week"/"24h" filter both display
+// down to entries from that window.
+let selectedCounterRange = "all";
+
+// Reads back whatever number is currently painted on the counter (mid
+// count-up-animation or settled), so a new animation can smoothly
+// continue from wherever the display actually is right now.
+function currentDisplayedCounterValue() {
+  const parsed = parseInt((beerCounterEl.textContent || "0").replace(/,/g, ""), 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function getBeerCount() {
   const stored = parseInt(localStorage.getItem(COUNTER_STORAGE_KEY), 10);
   return Number.isFinite(stored) ? Math.min(stored, COUNTER_MAX) : 0;
@@ -77,12 +91,20 @@ function animateBeerCounter(from, to, durationMs) {
 // On load, animate up from 0 to whatever this user has already logged.
 animateBeerCounter(0, getBeerCount(), COUNTER_LOAD_DURATION_MS);
 
-// Call this whenever a beer is successfully saved.
+// Call this whenever a beer is successfully saved. The all-time cache
+// in localStorage always advances, since a new entry is always "now"
+// and so always belongs in every range — but if a filtered range
+// (Week / 24h) is currently on screen, animate the visible number from
+// wherever it actually is rather than snapping it to the all-time
+// total.
 function incrementBeerCounter() {
   const before = getBeerCount();
   const after = setBeerCount(before + 1);
-  if (after !== before) {
-    animateBeerCounter(before, after, COUNTER_INCREMENT_DURATION_MS);
+  if (selectedCounterRange === "all") {
+    if (after !== before) animateBeerCounter(before, after, COUNTER_INCREMENT_DURATION_MS);
+  } else {
+    const displayedBefore = currentDisplayedCounterValue();
+    animateBeerCounter(displayedBefore, displayedBefore + 1, COUNTER_INCREMENT_DURATION_MS);
   }
 }
 
@@ -96,6 +118,190 @@ const REMAINING_FADE_DELAY_MS = 5000;
 setTimeout(() => {
   if (beerCounterRemainingEl) beerCounterRemainingEl.classList.add("is-hidden");
 }, REMAINING_FADE_DELAY_MS);
+
+/* ---------------------------------------------------------------- *
+ *  Counter time-range control: lets the person scope both the giant
+ *  counter and the globe's beer lights to the last 24h, the last
+ *  week, or all time. An icon-only button, pinned below the counter
+ *  on the screen's left edge (positioned by JS so it always clears
+ *  the counter's block regardless of its responsive font size);
+ *  tapping it reveals a segmented pill to its right whose active
+ *  segment is itself a draggable thumb — press and drag it across the
+ *  pill like an iOS segmented control, or just tap a label directly.
+ * ---------------------------------------------------------------- */
+
+const COUNTER_RANGE_ORDER = ["all", "week", "24h"];
+
+const counterRangePanel = document.getElementById("counter-range-panel");
+const counterRangeBtn = document.getElementById("counter-range-btn");
+const counterRangeTrack = document.getElementById("counter-range-track");
+const counterRangeThumb = document.getElementById("counter-range-thumb");
+const counterRangeSegs = Array.from(document.querySelectorAll(".counter-range-seg"));
+const beerCounterContainer = document.getElementById("beer-counter");
+
+function positionCounterRangePanel() {
+  if (!counterRangePanel || !beerCounterContainer) return;
+  const rect = beerCounterContainer.getBoundingClientRect();
+  counterRangePanel.style.top = `${Math.round(rect.bottom + 12)}px`;
+}
+
+positionCounterRangePanel();
+window.addEventListener("resize", positionCounterRangePanel);
+// The counter's own load-in animation doesn't change its height (one
+// line at a fixed font size throughout), but a re-check shortly after
+// covers any font/layout settling right after first paint.
+setTimeout(positionCounterRangePanel, COUNTER_LOAD_DURATION_MS);
+
+function openCounterRangeTrack() {
+  counterRangeTrack.hidden = false;
+  requestAnimationFrame(() => {
+    counterRangeTrack.classList.add("is-open");
+  });
+  counterRangeBtn.setAttribute("aria-expanded", "true");
+  document.addEventListener("click", onDocumentClickForCounterRange, true);
+  document.addEventListener("keydown", onDocumentKeydownForCounterRange);
+}
+
+function closeCounterRangeTrack() {
+  counterRangeTrack.classList.remove("is-open");
+  counterRangeBtn.setAttribute("aria-expanded", "false");
+  document.removeEventListener("click", onDocumentClickForCounterRange, true);
+  document.removeEventListener("keydown", onDocumentKeydownForCounterRange);
+  const onTransitionEnd = () => {
+    counterRangeTrack.hidden = true;
+    counterRangeTrack.removeEventListener("transitionend", onTransitionEnd);
+  };
+  counterRangeTrack.addEventListener("transitionend", onTransitionEnd);
+}
+
+function onDocumentClickForCounterRange(e) {
+  if (counterRangeTrack.contains(e.target) || counterRangeBtn.contains(e.target)) return;
+  closeCounterRangeTrack();
+}
+
+function onDocumentKeydownForCounterRange(e) {
+  if (e.key === "Escape") closeCounterRangeTrack();
+}
+
+counterRangeBtn.addEventListener("click", () => {
+  if (counterRangeTrack.classList.contains("is-open")) {
+    closeCounterRangeTrack();
+  } else {
+    openCounterRangeTrack();
+  }
+});
+
+// Re-fetches the worldwide count scoped to `range` and animates the
+// counter from whatever it's currently showing to the new total. When
+// scoped to "all", also true up the localStorage cache that the rest
+// of the counter logic (increments, initial load) reads from.
+async function refreshCounterForRange(range) {
+  try {
+    let query = supabaseClient.from("beer_entries").select("*", { count: "exact", head: true });
+    const cutoffIso = leaderboardRangeCutoffIso(range);
+    if (cutoffIso) query = query.gte("created_at", cutoffIso);
+    const { count, error } = await query;
+    if (error) throw error;
+    if (typeof count === "number") {
+      animateBeerCounter(currentDisplayedCounterValue(), count, COUNTER_LOAD_DURATION_MS);
+      if (range === "all") setBeerCount(count);
+    }
+  } catch (err) {
+    console.error("Failed to load beer count for range:", range, err);
+  }
+}
+
+// "N beers to go" only makes sense against the all-time total, so it's
+// hidden whenever a filtered range is showing instead of the all-time
+// count.
+function applyCounterRange(range) {
+  if (beerCounterRemainingEl) beerCounterRemainingEl.hidden = range !== "all";
+  refreshCounterForRange(range);
+  initBeerLights(range);
+}
+
+// Applies `range` as the active segment: updates state, the visual
+// selection (thumb position + label styling/aria), and re-scopes the
+// counter/globe. Shared by both the tap-a-label path and the
+// drag-and-release path below.
+function selectCounterRange(range, { animateThumb = true } = {}) {
+  const index = COUNTER_RANGE_ORDER.indexOf(range);
+  if (index === -1) return;
+
+  const changed = range !== selectedCounterRange;
+  selectedCounterRange = range;
+
+  counterRangeSegs.forEach((seg) => {
+    const selected = seg.dataset.range === range;
+    seg.classList.toggle("is-selected", selected);
+    seg.setAttribute("aria-checked", selected ? "true" : "false");
+  });
+
+  if (!animateThumb) counterRangeThumb.classList.add("is-dragging");
+  counterRangeThumb.style.transform = `translateX(${index * 100}%)`;
+  if (!animateThumb) {
+    // Force a reflow so the transform above applies instantly before
+    // transitions are re-enabled, otherwise the next real drag/snap
+    // would animate from the stale position.
+    void counterRangeThumb.offsetWidth;
+    counterRangeThumb.classList.remove("is-dragging");
+  }
+
+  if (changed) applyCounterRange(range);
+}
+
+counterRangeSegs.forEach((seg) => {
+  seg.addEventListener("click", () => {
+    selectCounterRange(seg.dataset.range);
+    closeCounterRangeTrack();
+  });
+});
+
+/* -- Dragging the active thumb directly, finger-following. -- */
+
+let counterRangeDragging = false;
+let counterRangeDragSegWidth = 0;
+let counterRangeDragTrackLeft = 0;
+let counterRangeDragX = 0;
+
+function onCounterRangeThumbPointerDown(e) {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  counterRangeDragging = true;
+  counterRangeThumb.classList.add("is-dragging");
+  counterRangeThumb.setPointerCapture(e.pointerId);
+
+  const trackRect = counterRangeTrack.getBoundingClientRect();
+  const trackPadding = 3; // must match .counter-range-track padding
+  counterRangeDragTrackLeft = trackRect.left + trackPadding;
+  counterRangeDragSegWidth = (trackRect.width - trackPadding * 2) / COUNTER_RANGE_ORDER.length;
+  counterRangeDragX = counterRangeDragSegWidth * COUNTER_RANGE_ORDER.indexOf(selectedCounterRange);
+}
+
+function onCounterRangeThumbPointerMove(e) {
+  if (!counterRangeDragging) return;
+  const maxX = counterRangeDragSegWidth * (COUNTER_RANGE_ORDER.length - 1);
+  counterRangeDragX = Math.max(0, Math.min(maxX, e.clientX - counterRangeDragTrackLeft - counterRangeDragSegWidth / 2));
+  counterRangeThumb.style.transform = `translateX(${counterRangeDragX}px)`;
+}
+
+function onCounterRangeThumbPointerUp() {
+  if (!counterRangeDragging) return;
+  counterRangeDragging = false;
+  counterRangeThumb.classList.remove("is-dragging");
+
+  const index = Math.round(counterRangeDragX / counterRangeDragSegWidth);
+  const range = COUNTER_RANGE_ORDER[Math.max(0, Math.min(COUNTER_RANGE_ORDER.length - 1, index))];
+  selectCounterRange(range);
+  // Let the snap-into-place animation (see .counter-range-thumb's
+  // transition) actually play before the track closes, same as
+  // tapping a label does immediately.
+  setTimeout(closeCounterRangeTrack, 280);
+}
+
+counterRangeThumb.addEventListener("pointerdown", onCounterRangeThumbPointerDown);
+counterRangeThumb.addEventListener("pointermove", onCounterRangeThumbPointerMove);
+counterRangeThumb.addEventListener("pointerup", onCounterRangeThumbPointerUp);
+counterRangeThumb.addEventListener("pointercancel", onCounterRangeThumbPointerUp);
 
 /* ---------------------------------------------------------------- *
  *  Supabase: gives every visitor a persistent (anonymous) identity,
@@ -393,20 +599,30 @@ function createBeerLightMarker(lat, lng) {
 
 // Renders every beer logged so far, worldwide (public read on
 // beer_entries) — falling back to this device's own localStorage
-// cache if the server is unreachable.
-async function initBeerLights() {
+// cache if the server is unreachable. Re-runnable: called again by
+// the counter time-range dropdown to rescope which lights are shown,
+// clearing out whatever's currently on the globe first.
+async function initBeerLights(range = "all") {
+  beerLights.forEach((light) => light.marker.remove());
+  beerLights = [];
+
   let locations = [];
   try {
-    const { data, error } = await supabaseClient
+    let query = supabaseClient
       .from("beer_entries")
-      .select("bar_lat, bar_lng")
+      .select("bar_lat, bar_lng, created_at")
       .not("bar_lat", "is", null)
       .not("bar_lng", "is", null);
+    const cutoffIso = leaderboardRangeCutoffIso(range);
+    if (cutoffIso) query = query.gte("created_at", cutoffIso);
+    const { data, error } = await query;
     if (error) throw error;
     locations = (data || []).map((row) => ({ lat: row.bar_lat, lng: row.bar_lng }));
   } catch (err) {
     console.error("Failed to load shared beer lights, falling back to local cache:", err);
-    locations = getStoredBeerLightLocations();
+    // The local cache has no timestamps to filter by, so it only makes
+    // sense as a fallback for the all-time view.
+    locations = range === "all" ? getStoredBeerLightLocations() : [];
   }
 
   beerLights = locations.map(({ lat, lng }) => createBeerLightMarker(lat, lng));
@@ -451,11 +667,8 @@ const beerSheet = document.getElementById("beer-sheet");
 const beerForm = document.getElementById("beer-form");
 const beerPhotoThumb = document.getElementById("beer-photo-thumb");
 
-const barChipRow = document.getElementById("bar-chip-row");
-const barSearch = document.getElementById("bar-search");
 const barSearchInput = document.getElementById("bar-search-input");
 const barSearchResults = document.getElementById("bar-search-results");
-const nearbyOptionalTag = document.getElementById("nearby-optional-tag");
 const barRequiredHint = document.getElementById("bar-required-hint");
 
 const beerChipRow = document.getElementById("beer-chip-row");
@@ -509,6 +722,7 @@ function closeOtherSheets(exceptSheet) {
   if (exceptSheet !== beerSheet && !beerSheet.hidden) closeBeerSheet();
   if (exceptSheet !== profileSheet && !profileSheet.hidden) closeProfileSheet();
   if (exceptSheet !== statsSheet && !statsSheet.hidden) closeStatsSheet();
+  if (exceptSheet !== battlefieldSheet && !battlefieldSheet.hidden) closeBattlefieldSheet();
 }
 
 function openBeerSheet() {
@@ -532,7 +746,6 @@ function openBeerSheet() {
   resetBarState();
   resetBeerNameState();
   resetPriceState();
-  renderBarChips();
   renderBeerChips();
   locateUserForBars();
 }
@@ -577,13 +790,16 @@ function createChip(label, isSelected) {
 }
 
 /* ---------------------------------------------------------------- *
- *  Nearby: with location access, the closest 2 drink-friendly spots
- *  (Overpass, 1.5km radius) show as chips — bars/pubs, but also
- *  restaurants, cafes, and nightclubs, plus "Other…" for a live text
- *  search that covers everything else, filtered to that same radius.
- *  Without location access, a spot is required, and the same search
- *  box is shown directly instead of chips (unfiltered by distance,
- *  since there's no location to filter against).
+ *  Bar: required — the user always types it in. As they type, a
+ *  dropdown suggests bars already logged by anyone in the app (from
+ *  beer_entries itself, not an external POI database), fuzzy-matched
+ *  by name and, once we know the user's location, narrowed to ones
+ *  very close by. Picking a suggestion reuses its stored coordinates
+ *  so repeat visits to the same spot land on the same lat/lng, which
+ *  keeps Battlefield claims tied to one consistent bar instead of
+ *  splintering across near-duplicate names. With location access off
+ *  there's nothing to narrow by, so every matching bar name in the
+ *  database shows instead.
  * ---------------------------------------------------------------- */
 
 const NEARBY_RADIUS_METERS = 1500;
@@ -591,191 +807,120 @@ const NEARBY_RADIUS_METERS = 1500;
 let userLat = null;
 let userLng = null;
 let locationStatus = "pending"; // "pending" | "granted" | "denied"
-let nearbyBars = []; // [{ name, lat, lon }], closest drink-friendly spots
 let selectedBarName = null;
-let selectedBarIsOther = false;
 let selectedBarLat = null;
 let selectedBarLng = null;
 let barTextSearchTimer = null;
+let barSearchRequestId = 0; // guards a slow, stale lookup from clobbering a newer one
 
 function resetBarState() {
   userLat = null;
   userLng = null;
   locationStatus = "pending";
-  nearbyBars = [];
   selectedBarName = null;
-  selectedBarIsOther = false;
   selectedBarLat = null;
   selectedBarLng = null;
   clearTimeout(barTextSearchTimer);
   barSearchInput.value = "";
-  barSearch.hidden = true;
   barSearchResults.innerHTML = "";
-  barRequiredHint.hidden = true;
   barRequiredHint.classList.remove("field-hint-error");
-  nearbyOptionalTag.textContent = "(optional)";
+  updateBarHint();
 }
 
 function locateUserForBars() {
   if (!navigator.geolocation) {
     locationStatus = "denied";
-    renderBarChips();
+    updateBarHint();
     return;
   }
   navigator.geolocation.getCurrentPosition(
-    async (pos) => {
+    (pos) => {
       userLat = pos.coords.latitude;
       userLng = pos.coords.longitude;
       locationStatus = "granted";
-      try {
-        nearbyBars = await fetchNearbyPlaces(
-          userLat,
-          userLng,
-          "^(bar|pub|restaurant|cafe|nightclub|biergarten)$",
-          NEARBY_RADIUS_METERS,
-          2
-        );
-      } catch (err) {
-        console.error("Nearby bar lookup failed:", err);
-      }
-      renderBarChips();
+      updateBarHint();
+      // Re-run whatever's already typed now that there's a location to
+      // narrow suggestions by.
+      if (barSearchInput.value.trim().length >= 2) debounceBarTextSearch(barSearchInput.value);
     },
     () => {
       locationStatus = "denied";
-      renderBarChips();
+      updateBarHint();
     },
     { enableHighAccuracy: true, timeout: 8000 }
   );
 }
 
-function renderBarChips() {
-  if (locationStatus === "denied") {
-    // No location to base "nearby" on: skip chips entirely and make
-    // the search box itself the (now required) field.
-    barChipRow.hidden = true;
-    barChipRow.innerHTML = "";
-    barSearch.hidden = false;
-    nearbyOptionalTag.textContent = "(required — location is off)";
-    updateBarRequiredHint();
-    return;
+// Contextual line under the input: what "nearby" means right now, or —
+// once the user's tried to save without a name — a validation error.
+function updateBarHint() {
+  barRequiredHint.hidden = false;
+  if (locationStatus === "granted") {
+    barRequiredHint.textContent = "Showing bars near you as you type.";
+  } else if (locationStatus === "denied") {
+    barRequiredHint.textContent = "Location is off — showing every matching bar.";
+  } else {
+    barRequiredHint.textContent = "Start typing to search.";
   }
-
-  barChipRow.hidden = false;
-  nearbyOptionalTag.textContent = "(optional)";
-  barChipRow.innerHTML = "";
-
-  if (locationStatus === "pending") {
-    const loading = createChip("Finding nearby spots…", false);
-    loading.disabled = true;
-    loading.classList.add("chip-loading");
-    barChipRow.appendChild(loading);
-  }
-
-  nearbyBars.forEach((bar) => {
-    const chip = createChip(bar.name, !selectedBarIsOther && selectedBarName === bar.name);
-    chip.addEventListener("click", () => selectBar(bar.name, false, bar.lat, bar.lon));
-    barChipRow.appendChild(chip);
-  });
-
-  const otherLabel = selectedBarIsOther && selectedBarName ? selectedBarName : "Other…";
-  const otherChip = createChip(otherLabel, selectedBarIsOther);
-  otherChip.classList.add("chip-other");
-  otherChip.addEventListener("click", toggleBarSearch);
-  barChipRow.appendChild(otherChip);
 }
 
-function selectBar(name, isOther, lat = null, lon = null) {
+function selectBar(name, lat = null, lon = null) {
   selectedBarName = name;
-  selectedBarIsOther = isOther;
   selectedBarLat = lat;
   selectedBarLng = lon;
-  if (locationStatus === "denied") {
-    barSearchInput.value = name;
-    barSearchResults.innerHTML = "";
-    updateBarRequiredHint();
-  } else {
-    barSearch.hidden = true;
-    renderBarChips();
-  }
-}
-
-// Message under the search box in the required (location-denied)
-// state: shows what's currently entered, or the requirement, or a
-// validation error once the user's tried to save without one.
-function updateBarRequiredHint() {
-  if (locationStatus !== "denied") return;
-  barRequiredHint.hidden = false;
-  barRequiredHint.classList.remove("field-hint-error");
-  barRequiredHint.textContent = selectedBarName
-    ? `Selected: ${selectedBarName}`
-    : "Location is off — search for your bar or pub to continue.";
-}
-
-function toggleBarSearch() {
-  const opening = barSearch.hidden;
-  barSearch.hidden = !opening;
-  if (!opening) return;
-
-  barSearchInput.focus();
-  renderBarSearchResults([], barSearchInput.value);
+  barSearchInput.value = name;
+  barSearchResults.innerHTML = "";
 }
 
 barSearchInput.addEventListener("input", () => {
   const value = barSearchInput.value;
   // Every keystroke counts as the entered name, so simply typing
-  // (without picking a suggestion) still satisfies the requirement
-  // when location is off, and still counts as "Other…" when it's on.
+  // (without picking a suggestion) still satisfies the requirement —
+  // coordinates just stay unset until/unless a suggestion is picked.
   selectedBarName = value.trim() || null;
-  selectedBarIsOther = true;
   selectedBarLat = null;
   selectedBarLng = null;
-  if (locationStatus === "denied") updateBarRequiredHint();
+  barRequiredHint.classList.remove("field-hint-error");
+  updateBarHint();
   debounceBarTextSearch(value);
 });
 
-// Live text search (OpenStreetMap/Nominatim), biased toward the
-// user's location when we have one. Debounced so it's one request per
-// pause in typing, not per keystroke.
+// Live search against our own beer_entries, debounced so it's one
+// request per pause in typing rather than per keystroke.
 function debounceBarTextSearch(query) {
   clearTimeout(barTextSearchTimer);
   const trimmed = query.trim();
   if (trimmed.length < 2) {
-    renderBarSearchResults([], trimmed);
+    barSearchResults.innerHTML = "";
     return;
   }
   barSearchResults.innerHTML = '<li class="search-hint">Searching…</li>';
   barTextSearchTimer = setTimeout(async () => {
+    const requestId = ++barSearchRequestId;
     try {
-      const matches = await fetchPlacesByName(trimmed, userLat, userLng);
-      renderBarSearchResults(matches, trimmed);
+      const matches = await fetchBarSuggestions(trimmed, userLat, userLng);
+      if (requestId !== barSearchRequestId) return; // superseded by newer typing
+      renderBarSearchResults(matches);
     } catch (err) {
+      if (requestId !== barSearchRequestId) return;
       console.error("Bar name search failed:", err);
       barSearchResults.innerHTML = '<li class="search-hint">Search failed — what you typed will still be used.</li>';
     }
   }, 400);
 }
 
-function renderBarSearchResults(matches, query) {
-  const q = query.trim();
+function renderBarSearchResults(matches) {
   barSearchResults.innerHTML = "";
-
-  if (q) {
-    const useCustom = document.createElement("li");
-    useCustom.className = "search-result search-result-custom";
-    useCustom.textContent = `Use “${q}”`;
-    useCustom.addEventListener("click", () => selectBar(q, true));
-    barSearchResults.appendChild(useCustom);
-  }
 
   if (matches.length === 0) {
     const hint = document.createElement("li");
     hint.className = "search-hint";
-    hint.textContent = q ? "No matches — what you typed will still be used." : "Search bars, restaurants, pubs, clubs…";
+    hint.textContent = "No matches yet — what you typed will still be used.";
     barSearchResults.appendChild(hint);
     return;
   }
 
-  matches.slice(0, 8).forEach((place) => {
+  matches.forEach((place) => {
     const li = document.createElement("li");
     li.className = "search-result";
 
@@ -784,146 +929,63 @@ function renderBarSearchResults(matches, query) {
     nameEl.textContent = place.name;
     li.appendChild(nameEl);
 
-    const locationLabel = [place.city, place.country].filter(Boolean).join(", ");
-    if (locationLabel) {
-      const locationEl = document.createElement("span");
-      locationEl.className = "search-result-location";
-      locationEl.textContent = locationLabel;
-      li.appendChild(locationEl);
+    if (place.distance !== null) {
+      const distEl = document.createElement("span");
+      distEl.className = "search-result-location";
+      distEl.textContent = formatDistance(place.distance);
+      li.appendChild(distEl);
     }
 
-    li.addEventListener("click", () => selectBar(place.name, true, place.lat, place.lon));
+    li.addEventListener("click", () => selectBar(place.name, place.lat, place.lon));
     barSearchResults.appendChild(li);
   });
 }
 
-// Amenity types we treat as "a place you could have a beer" — used to
-// filter Nominatim results. Kept a little wider than just bar/pub so a
-// real-world venue (a cafe that also serves beer, a biergarten, a
-// food-hall stall) isn't silently dropped from the dropdown.
-const DRINK_VENUE_TYPES = [
-  "bar", "pub", "restaurant", "nightclub", "biergarten", "cafe", "food_court", "pub;bar",
-];
-
-// Free-text place search, biased toward (lat, lon) when available via
-// a soft (bounded=0) viewbox for ranking, then hard-filtered to
-// NEARBY_RADIUS_METERS so the dropdown never suggests a venue outside
-// the app's own "nearby" radius. With no location (search box shown
-// because location access is off), there's nothing to filter against,
-// so results are returned unfiltered. Nominatim, same free
-// OpenStreetMap data as the rest of the app.
-async function fetchPlacesByName(query, lat = null, lon = null) {
-  const params = new URLSearchParams({
-    format: "jsonv2",
-    q: query,
-    addressdetails: "1",
-    namedetails: "1",
-    limit: "15",
-  });
-  if (lat !== null && lon !== null) {
-    const delta = 0.2; // ~22km box around the user, soft bias only
-    params.set("viewbox", `${lon - delta},${lat + delta},${lon + delta},${lat - delta}`);
-    params.set("bounded", "0");
-  }
-
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) return [];
-  const data = await res.json();
-  if (!Array.isArray(data)) return [];
-
-  const withinRadius = (place) =>
-    lat === null || lon === null || distanceMeters(lat, lon, place.lat, place.lon) <= NEARBY_RADIUS_METERS;
-
-  const toPlace = (r) => {
-    const addr = r.address || {};
-    return {
-      name: (r.namedetails && r.namedetails.name) || (r.display_name || "").split(",")[0],
-      lat: Number(r.lat),
-      lon: Number(r.lon),
-      // Nominatim doesn't always tag "city" — town/village/municipality
-      // cover smaller places that would otherwise come back empty.
-      city: addr.city || addr.town || addr.village || addr.municipality || null,
-      country: addr.country || null,
-    };
-  };
-
-  const drinkVenues = data.filter((r) => DRINK_VENUE_TYPES.includes(r.type)).map(toPlace).filter(withinRadius);
-  if (drinkVenues.length > 0) return drinkVenues;
-
-  // Nominatim already ranks by relevance to the typed query — if none
-  // of the results happen to carry one of our expected amenity types
-  // (a lot of real venues don't tag cleanly), showing its raw top
-  // matches (still radius-filtered) beats showing nothing at all.
-  return data.map(toPlace).filter(withinRadius).slice(0, 8);
+function formatDistance(meters) {
+  return meters < 1000 ? `${Math.round(meters)}m` : `${(meters / 1000).toFixed(1)}km`;
 }
 
-// A couple of public Overpass mirrors, tried in order — overpass-api.de
-// alone has been known to reject/CORS-fail browser requests outright,
-// so a fallback keeps "nearby bars" working even when the primary is
-// down or blocking us.
-const OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://overpass.openstreetmap.ru/api/interpreter",
-];
+// Searches this app's own bar names (beer_entries.bar_name) rather
+// than an external POI database, so a suggestion always matches a bar
+// someone in the app has actually logged before — and picking one
+// reuses its coordinates, keeping repeat visits (and Battlefield
+// claims) tied to the same spot instead of near-duplicate names.
+// Fuzzy-matched by substring; narrowed to NEARBY_RADIUS_METERS once a
+// location is known, unfiltered (every matching name) otherwise.
+async function fetchBarSuggestions(query, lat, lon) {
+  const { data, error } = await supabaseClient
+    .from("beer_entries")
+    .select("bar_name, bar_lat, bar_lng")
+    .not("bar_name", "is", null)
+    .ilike("bar_name", `%${query}%`)
+    .limit(200);
+  if (error) throw error;
 
-// Shared Overpass helper: nodes matching an amenity regex within
-// radiusMeters of (lat, lon), named, sorted by distance, capped at
-// `limit`. Free, no-API-key OpenStreetMap data — same source as the
-// map tiles.
-//
-// The query is sent as a proper `application/x-www-form-urlencoded`
-// body (data=<query>) rather than a raw text body: Overpass's public
-// endpoints are picky about this and will hand back a 406 with no
-// CORS header at all for a plain-text POST, which the browser then
-// reports as an opaque "Failed to fetch"/CORS error rather than the
-// real 406. Encoding it properly avoids that, and trying the mirrors
-// below covers the rest.
-// How long to wait on a single Overpass mirror before giving up on it
-// and trying the next one. The `[timeout:8]` inside the query string
-// only bounds how long the *server* spends running the query — it
-// does nothing if the request never gets a response at all (a stalled
-// connection, a mirror that's down but not actively refusing), so
-// without a client-side timeout too, a single bad mirror can hang the
-// whole "Finding nearby spots…" step indefinitely.
-const OVERPASS_FETCH_TIMEOUT_MS = 6000;
+  // Dedupe by name, keeping whichever logged coordinates are closest
+  // to the user (or just the first seen, with no location to compare).
+  const byName = new Map();
+  (data || []).forEach((row) => {
+    const name = (row.bar_name || "").trim();
+    if (!name) return;
+    const rlat = Number(row.bar_lat);
+    const rlon = Number(row.bar_lng);
+    const hasCoords = Number.isFinite(rlat) && Number.isFinite(rlon);
+    const distance = hasCoords && lat !== null && lon !== null ? distanceMeters(lat, lon, rlat, rlon) : null;
 
-function fetchWithTimeout(url, options, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
-}
-
-async function fetchNearbyPlaces(lat, lon, amenityRegex, radiusMeters, limit) {
-  const query = `[out:json][timeout:8];node(around:${radiusMeters},${lat},${lon})[amenity~"${amenityRegex}"];out;`;
-  const body = new URLSearchParams({ data: query });
-
-  let data = null;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
-      const res = await fetchWithTimeout(endpoint, { method: "POST", body }, OVERPASS_FETCH_TIMEOUT_MS);
-      if (!res.ok) continue;
-      data = await res.json();
-      break;
-    } catch (err) {
-      // Timed out or failed outright — try the next mirror.
-      continue;
+    const existing = byName.get(name);
+    if (!existing || (distance !== null && (existing.distance === null || distance < existing.distance))) {
+      byName.set(name, { name, lat: hasCoords ? rlat : null, lon: hasCoords ? rlon : null, distance });
     }
-  }
-  if (!data) return [];
+  });
 
-  return (data.elements || [])
-    .filter((el) => el.tags && el.tags.name)
-    .map((el) => ({
-      name: el.tags.name,
-      lat: el.lat,
-      lon: el.lon,
-      distance: angularDistanceDeg(lat, lon, el.lat, el.lon),
-    }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, limit);
+  let results = Array.from(byName.values());
+  if (lat !== null && lon !== null) {
+    results = results.filter((r) => r.distance !== null && r.distance <= NEARBY_RADIUS_METERS);
+    results.sort((a, b) => a.distance - b.distance);
+  } else {
+    results.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return results.slice(0, 8);
 }
 
 /* ---------------------------------------------------------------- *
@@ -1251,12 +1313,13 @@ function showLegendPopup() {
 beerForm.addEventListener("submit", (e) => {
   e.preventDefault();
 
-  // The only field that isn't optional: without location access we
-  // have no other way to know where this beer was had.
-  if (locationStatus === "denied" && !selectedBarName) {
+  // Bar name is now always required — the user types it in, which is
+  // also what keeps repeat visits (and Battlefield claims) tied to a
+  // single consistent name instead of drifting apart.
+  if (!selectedBarName) {
     barRequiredHint.hidden = false;
     barRequiredHint.classList.add("field-hint-error");
-    barRequiredHint.textContent = "Please enter a bar or pub to continue.";
+    barRequiredHint.textContent = "Please enter a bar name to continue.";
     barSearchInput.focus();
     return;
   }
@@ -1363,6 +1426,7 @@ function openProfileSheet() {
   profileAvatarPicker.hidden = true;
   renderProfile();
   loadProfileStats();
+  refreshProfileMapCoverage();
 }
 
 function closeProfileSheet() {
@@ -1512,11 +1576,10 @@ menuItemStats.addEventListener("click", () => {
   openStatsSheet();
 });
 
-// Not specced yet — placeholder so the item is tappable without
-// throwing; wire this up once there's an actual destination for it.
 menuItemBattlefield.addEventListener("click", () => {
   closeMenuList();
   setActiveMenuIcon("battlefield");
+  openBattlefieldSheet();
 });
 profileSheetBackdrop.addEventListener("click", closeProfileSheet);
 
@@ -1634,6 +1697,262 @@ profileUsernameInput.addEventListener("keydown", (e) => {
     profileUsernameInput.blur();
   }
 });
+
+/* ---------------------------------------------------------------- *
+ *  Profile mini map: a small, always-dark world map showing every
+ *  country the signed-in user has logged a beer in (gold fill).
+ *  Countries are resolved from each entry's bar_lat/bar_lng via the
+ *  same reverse-geocode cache the stats leaderboard uses, so repeat
+ *  opens are cheap. Tapping the map shows a little toast with the
+ *  percentage of the world's countries covered so far. The map
+ *  itself is a lightweight custom style (no basemap tiles) rather
+ *  than the heavier globe style, and isn't draggable/zoomable — it's
+ *  a preview, not a second globe.
+ * ---------------------------------------------------------------- */
+
+const profileMapEl = document.getElementById("profile-map");
+const profileMapToast = document.getElementById("profile-map-toast");
+const profileMapToastTextEl = document.getElementById("profile-map-toast-text");
+
+// Simplified (110m) Natural Earth country polygons — small enough for
+// a mini map, and each feature carries an ISO_A2 code to match
+// against Nominatim's reverse-geocode results.
+const WORLD_COUNTRIES_GEOJSON_URL =
+  "https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson";
+const PROFILE_MAP_GOLD = "#ffdb7a";
+const PROFILE_MAP_DEFAULT_FILL = "#232838";
+const PROFILE_MAP_LINE_COLOR = "rgba(255, 255, 255, 0.12)";
+
+// A handful of countries ship with ISO_A2 left unset ("-99") in the
+// Natural Earth 110m dataset — patched here by admin name so they can
+// still be matched and colored in.
+const COUNTRY_ISO2_NAME_OVERRIDES = {
+  France: "FR",
+  Norway: "NO",
+  Kosovo: "XK",
+  Somaliland: "SO",
+};
+
+// How many of this user's distinct ~1.1km location buckets we're
+// willing to reverse-geocode when building the map — generous enough
+// to cover a well-traveled profile without hammering Nominatim (busiest
+// buckets first, same priority order as the leaderboard).
+const PROFILE_MAP_GEOCODE_BUCKET_LIMIT = 60;
+
+let profileMap = null;
+let profileMapGeojson = null;
+let profileMapReady = false;
+let profileMapTotalCountryCount = 0;
+let profileMapVisitedIso2 = new Set();
+let profileMapToastHideTimer = null;
+
+function getFeatureIso2(feature) {
+  const props = (feature && feature.properties) || {};
+  let code = props.ISO_A2;
+  if (!code || code === "-99") {
+    code = COUNTRY_ISO2_NAME_OVERRIDES[props.ADMIN] || null;
+  }
+  return code ? String(code).toUpperCase() : null;
+}
+
+function buildProfileMapFillExpression() {
+  if (!profileMapVisitedIso2.size) return PROFILE_MAP_DEFAULT_FILL;
+  const expr = ["match", ["get", "ISO_A2"]];
+  profileMapVisitedIso2.forEach((code) => {
+    expr.push(code, PROFILE_MAP_GOLD);
+  });
+  expr.push(PROFILE_MAP_DEFAULT_FILL);
+  return expr;
+}
+
+function applyProfileMapVisited() {
+  if (!profileMap || !profileMapReady) return;
+  profileMap.setPaintProperty("countries-fill", "fill-color", buildProfileMapFillExpression());
+}
+
+// Builds the map the first time the profile drawer opens; a no-op on
+// every later open.
+function initProfileMap() {
+  if (profileMap || !profileMapEl || typeof maplibregl === "undefined") return;
+
+  profileMap = new maplibregl.Map({
+    container: profileMapEl,
+    attributionControl: false,
+    interactive: false,
+    style: {
+      version: 8,
+      sources: {},
+      layers: [{ id: "bg", type: "background", paint: { "background-color": "#0b0e16" } }],
+    },
+    center: [12, 15],
+    zoom: 0,
+  });
+
+  profileMap.on("load", async () => {
+    try {
+      if (!profileMapGeojson) {
+        const res = await fetch(WORLD_COUNTRIES_GEOJSON_URL);
+        if (!res.ok) throw new Error(`Failed to load world map (${res.status})`);
+        profileMapGeojson = await res.json();
+      }
+
+      const allCodes = new Set();
+      profileMapGeojson.features.forEach((feature) => {
+        const code = getFeatureIso2(feature);
+        // Antarctica isn't a country you can log a beer "in" the same
+        // way, so it's excluded from both the map's fill data and the
+        // coverage percentage's denominator.
+        if (code && code !== "AQ") allCodes.add(code);
+      });
+      profileMapTotalCountryCount = allCodes.size;
+
+      profileMap.addSource("countries", { type: "geojson", data: profileMapGeojson });
+      profileMap.addLayer({
+        id: "countries-fill",
+        type: "fill",
+        source: "countries",
+        paint: { "fill-color": PROFILE_MAP_DEFAULT_FILL },
+      });
+      profileMap.addLayer({
+        id: "countries-line",
+        type: "line",
+        source: "countries",
+        paint: { "line-color": PROFILE_MAP_LINE_COLOR, "line-width": 0.5 },
+      });
+
+      // Crops out the far southern/northern extremes (mostly empty
+      // ocean and Antarctica) so the inhabited world fills the mini
+      // map's short, wide frame instead of a fixed guessed zoom.
+      profileMap.fitBounds(
+        [
+          [-169, -58],
+          [191, 83],
+        ],
+        { padding: 0, animate: false }
+      );
+
+      profileMapReady = true;
+      applyProfileMapVisited();
+    } catch (err) {
+      console.error("Failed to set up profile map:", err);
+    }
+  });
+
+  profileMapEl.addEventListener("click", onProfileMapTap);
+  profileMapEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onProfileMapTap();
+    }
+  });
+}
+
+// One decimal place, but without a trailing ".0" for whole numbers.
+function formatCoveragePercent(pct) {
+  const rounded = Math.round(pct * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function showProfileMapToast(message) {
+  if (!profileMapToast || !profileMapToastTextEl) return;
+  clearTimeout(profileMapToastHideTimer);
+  profileMapToastTextEl.textContent = message;
+  profileMapToast.hidden = false;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      profileMapToast.classList.add("is-open");
+    });
+  });
+
+  profileMapToastHideTimer = setTimeout(() => {
+    profileMapToast.classList.remove("is-open");
+    const onTransitionEnd = () => {
+      profileMapToast.hidden = true;
+      profileMapToast.removeEventListener("transitionend", onTransitionEnd);
+    };
+    profileMapToast.addEventListener("transitionend", onTransitionEnd);
+  }, 2200);
+}
+
+function onProfileMapTap() {
+  if (!profileMapReady || !profileMapTotalCountryCount) {
+    showProfileMapToast("Still mapping the world…");
+    return;
+  }
+  const pct = (profileMapVisitedIso2.size / profileMapTotalCountryCount) * 100;
+  showProfileMapToast(`${formatCoveragePercent(pct)}% of the world uncovered`);
+}
+
+// Reverse-geocodes this user's distinct beer-logging locations into
+// ISO_A2 country codes, reusing the leaderboard's geocode cache so
+// buckets already resolved elsewhere in the app cost nothing here.
+async function loadProfileMapVisitedCountries() {
+  if (!currentUser) return new Set();
+
+  const { data, error } = await supabaseClient
+    .from("beer_entries")
+    .select("bar_lat, bar_lng")
+    .eq("user_id", currentUser.id)
+    .not("bar_lat", "is", null)
+    .not("bar_lng", "is", null);
+  if (error) throw error;
+
+  const bucketCounts = {};
+  const bucketCoords = {};
+  (data || []).forEach((row) => {
+    const lat = Number(row.bar_lat);
+    const lng = Number(row.bar_lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const key = roundCoordKey(lat, lng);
+    bucketCounts[key] = (bucketCounts[key] || 0) + 1;
+    if (!bucketCoords[key]) bucketCoords[key] = { lat, lng };
+  });
+
+  const busiestBuckets = topTallyEntries(bucketCounts, PROFILE_MAP_GEOCODE_BUCKET_LIMIT);
+  if (!busiestBuckets.length) return new Set();
+
+  const cache = loadGeocodeCache();
+  let cacheDirty = false;
+  const codes = new Set();
+
+  for (const [key] of busiestBuckets) {
+    let resolved = cache[key];
+    // Cache entries written before country_code was tracked are
+    // treated as misses so they pick it up on next resolve.
+    if (!resolved || resolved.country_code === undefined) {
+      const { lat, lng } = bucketCoords[key];
+      try {
+        resolved = await reverseGeocodePlace(lat, lng);
+      } catch (err) {
+        console.warn("Reverse geocode failed for", key, err);
+        resolved = { city: null, country: null, country_code: null };
+      }
+      cache[key] = resolved;
+      cacheDirty = true;
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    if (resolved.country_code) codes.add(resolved.country_code.toUpperCase());
+  }
+
+  if (cacheDirty) saveGeocodeCache(cache);
+  return codes;
+}
+
+// Called every time the profile drawer opens: builds the map on first
+// call, then (re)resolves and paints the user's visited countries.
+async function refreshProfileMapCoverage() {
+  if (!currentUser || !profileMapEl) return;
+  initProfileMap();
+  if (profileMap) requestAnimationFrame(() => profileMap.resize());
+
+  try {
+    profileMapVisitedIso2 = await loadProfileMapVisitedCountries();
+  } catch (err) {
+    console.error("Failed to load visited countries:", err);
+    profileMapVisitedIso2 = new Set();
+  }
+  applyProfileMapVisited();
+}
 
 /* ---------------------------------------------------------------- *
  *  Stats drawer: tapping the giant counter opens a second sheet with
@@ -1962,18 +2281,33 @@ function roundCoordKey(lat, lng) {
   return `${lat.toFixed(2)},${lng.toFixed(2)}`;
 }
 
+// How long to wait on a single Nominatim request before giving up —
+// without a client-side timeout, a stalled connection could hang a
+// leaderboard/battlefield/profile-map load indefinitely.
+const GEOCODE_FETCH_TIMEOUT_MS = 6000;
+
+function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 async function reverseGeocodePlace(lat, lng) {
   const res = await fetchWithTimeout(
-    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1`,
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1&accept-language=en`,
     { headers: { Accept: "application/json" } },
-    OVERPASS_FETCH_TIMEOUT_MS
+    GEOCODE_FETCH_TIMEOUT_MS
   );
-  if (!res.ok) return { city: null, country: null };
+  if (!res.ok) return { city: null, country: null, country_code: null };
   const data = await res.json();
   const addr = (data && data.address) || {};
   return {
     city: addr.city || addr.town || addr.village || addr.municipality || null,
     country: addr.country || null,
+    // ISO 3166-1 alpha-2, always lowercase and locale-independent —
+    // used to match countries on the profile mini map instead of the
+    // display name above, which the app doesn't otherwise need.
+    country_code: addr.country_code || null,
   };
 }
 
@@ -2031,6 +2365,272 @@ async function computePlacesLeaderboard(scope, cutoffIso) {
   if (cacheDirty) saveGeocodeCache(cache);
 
   return topTallyEntries(tally, LEADERBOARD_TOP_N).map(([name, count]) => ({ name, count }));
+}
+
+/* ---------------------------------------------------------------- *
+ *  Battlefield drawer — opened from the menu's "Battlefield" item.
+ *  A country or bar is "claimed" by whoever has logged the most
+ *  beers there. "Me" lists claims the signed-in user currently
+ *  holds; "Other" lists claims held by anyone else, with who holds
+ *  each one. Bars come straight off beer_entries' bar_name; countries
+ *  reuse the same bucket + reverse-geocode + cache approach as the
+ *  stats leaderboard above. The two category cards act as a tiny
+ *  two-slide carousel — tapping either swaps the list beneath them.
+ * ---------------------------------------------------------------- */
+
+const battlefieldSheetBackdrop = document.getElementById("battlefield-sheet-backdrop");
+const battlefieldSheet = document.getElementById("battlefield-sheet");
+const battlefieldCards = Array.from(document.querySelectorAll(".battlefield-card"));
+const battlefieldCountMeEl = document.getElementById("battlefield-count-me");
+const battlefieldCountOtherEl = document.getElementById("battlefield-count-other");
+const battlefieldDetailsLabelEl = document.getElementById("battlefield-details-label");
+const battlefieldListEl = document.getElementById("battlefield-list");
+const battlefieldEmptyEl = document.getElementById("battlefield-empty");
+const battlefieldStatusEl = document.getElementById("battlefield-status");
+
+// Kept modest for the same reason as LEADERBOARD_GEOCODE_BUCKET_LIMIT
+// above — Nominatim's free tier expects roughly one request/sec, and
+// results are cached, so repeat opens cost nothing.
+const BATTLEFIELD_GEOCODE_BUCKET_LIMIT = 30;
+
+let battlefieldSide = "me";
+let battlefieldClaims = null; // { me: [...], other: [...] }, filled in by loadBattlefield
+let battlefieldRequestId = 0; // guards against a slow, stale load clobbering a newer one
+
+function openBattlefieldSheet() {
+  closeOtherSheets(battlefieldSheet);
+  battlefieldSheetBackdrop.hidden = false;
+  battlefieldSheet.hidden = false;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      battlefieldSheetBackdrop.classList.add("is-open");
+      battlefieldSheet.classList.add("is-open");
+    });
+  });
+
+  loadBattlefield();
+}
+
+function closeBattlefieldSheet() {
+  battlefieldSheetBackdrop.classList.remove("is-open");
+  battlefieldSheet.classList.remove("is-open");
+  const onTransitionEnd = () => {
+    battlefieldSheetBackdrop.hidden = true;
+    battlefieldSheet.hidden = true;
+    battlefieldSheet.removeEventListener("transitionend", onTransitionEnd);
+  };
+  battlefieldSheet.addEventListener("transitionend", onTransitionEnd);
+}
+
+battlefieldSheetBackdrop.addEventListener("click", closeBattlefieldSheet);
+
+battlefieldCards.forEach((card) => {
+  card.addEventListener("click", () => {
+    const side = card.dataset.side;
+    if (side === battlefieldSide) return;
+    setBattlefieldSide(side);
+  });
+});
+
+function setBattlefieldSide(side) {
+  battlefieldSide = side;
+  battlefieldCards.forEach((card) => {
+    const selected = card.dataset.side === side;
+    card.classList.toggle("is-selected", selected);
+    card.setAttribute("aria-selected", selected ? "true" : "false");
+  });
+  battlefieldDetailsLabelEl.textContent = side === "me" ? "Your territory" : "Held by others";
+  renderBattlefieldList();
+}
+
+function renderBattlefieldList() {
+  battlefieldListEl.innerHTML = "";
+  if (!battlefieldClaims) return;
+
+  const items = battlefieldClaims[battlefieldSide] || [];
+  battlefieldEmptyEl.hidden = items.length > 0;
+  battlefieldEmptyEl.textContent =
+    battlefieldSide === "me"
+      ? "Nothing claimed yet — log a beer somewhere to start claiming it."
+      : "No rivals hold any territory yet.";
+
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "battlefield-row";
+
+    const icon = document.createElement("span");
+    icon.className = "battlefield-row-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = item.type === "country" ? "🌍" : "📍";
+    li.appendChild(icon);
+
+    const main = document.createElement("div");
+    main.className = "battlefield-row-main";
+
+    const name = document.createElement("span");
+    name.className = "battlefield-row-name";
+    name.textContent = item.name;
+    main.appendChild(name);
+
+    const sub = document.createElement("span");
+    sub.className = "battlefield-row-sub";
+    sub.textContent =
+      battlefieldSide === "other"
+        ? `${item.claimantEmoji} Held by ${item.claimantName}`
+        : item.type === "country"
+        ? "Country"
+        : "Bar";
+    main.appendChild(sub);
+
+    li.appendChild(main);
+
+    const count = document.createElement("span");
+    count.className = "battlefield-row-count";
+    count.textContent = `${item.count.toLocaleString("en-US")} 🍺`;
+    li.appendChild(count);
+
+    battlefieldListEl.appendChild(li);
+  });
+}
+
+// Tallies bar-name claims (no geocoding needed) into a flat list, one
+// entry per bar, each carrying whichever user logged the most beers
+// there and that winning count.
+function tallyBarClaims(rows) {
+  const byBar = {}; // bar name -> { userId -> count }
+  rows.forEach((row) => {
+    const name = (row.bar_name || "").trim();
+    if (!name || !row.user_id) return;
+    if (!byBar[name]) byBar[name] = {};
+    byBar[name][row.user_id] = (byBar[name][row.user_id] || 0) + 1;
+  });
+
+  return Object.entries(byBar).map(([name, byUser]) => {
+    const [claimantId, count] = Object.entries(byUser).sort((a, b) => b[1] - a[1])[0];
+    return { type: "bar", name, claimantId, count };
+  });
+}
+
+// Buckets entries by rounded coords, reverse-geocodes the busiest
+// buckets (reusing the leaderboard's cache/rate-limit approach above),
+// then rolls each bucket's per-user tally up into its country so a
+// country claim reflects every entry that resolved there, not just
+// the busiest single spot.
+async function tallyCountryClaims(rows) {
+  const bucketCoords = {};
+  const bucketByUser = {}; // roundedKey -> { userId -> count }
+  const bucketTotals = {}; // roundedKey -> count, used to pick the busiest buckets to geocode
+
+  rows.forEach((row) => {
+    const lat = Number(row.bar_lat);
+    const lng = Number(row.bar_lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !row.user_id) return;
+    const key = roundCoordKey(lat, lng);
+    if (!bucketCoords[key]) bucketCoords[key] = { lat, lng };
+    if (!bucketByUser[key]) bucketByUser[key] = {};
+    bucketByUser[key][row.user_id] = (bucketByUser[key][row.user_id] || 0) + 1;
+    bucketTotals[key] = (bucketTotals[key] || 0) + 1;
+  });
+
+  const busiestBuckets = topTallyEntries(bucketTotals, BATTLEFIELD_GEOCODE_BUCKET_LIMIT);
+  if (!busiestBuckets.length) return [];
+
+  const cache = loadGeocodeCache();
+  let cacheDirty = false;
+  const byCountry = {}; // country name -> { userId -> count }
+
+  for (const [key] of busiestBuckets) {
+    let resolved = cache[key];
+    if (!resolved) {
+      const { lat, lng } = bucketCoords[key];
+      try {
+        resolved = await reverseGeocodePlace(lat, lng);
+      } catch (err) {
+        console.warn("Reverse geocode failed for", key, err);
+        resolved = { city: null, country: null, country_code: null };
+      }
+      cache[key] = resolved;
+      cacheDirty = true;
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+
+    const country = resolved.country;
+    if (!country) continue;
+    if (!byCountry[country]) byCountry[country] = {};
+    Object.entries(bucketByUser[key]).forEach(([userId, count]) => {
+      byCountry[country][userId] = (byCountry[country][userId] || 0) + count;
+    });
+  }
+
+  if (cacheDirty) saveGeocodeCache(cache);
+
+  return Object.entries(byCountry).map(([name, byUser]) => {
+    const [claimantId, count] = Object.entries(byUser).sort((a, b) => b[1] - a[1])[0];
+    return { type: "country", name, claimantId, count };
+  });
+}
+
+async function loadBattlefield() {
+  const requestId = ++battlefieldRequestId;
+  battlefieldCountMeEl.textContent = "–";
+  battlefieldCountOtherEl.textContent = "–";
+  battlefieldListEl.innerHTML = "";
+  battlefieldEmptyEl.hidden = true;
+  battlefieldStatusEl.hidden = false;
+  battlefieldStatusEl.classList.remove("field-hint-error");
+  battlefieldStatusEl.textContent = "Loading…";
+
+  try {
+    const { data, error } = await supabaseClient.from("beer_entries").select("user_id, bar_name, bar_lat, bar_lng");
+    if (error) throw error;
+    const rows = data || [];
+
+    const barClaims = tallyBarClaims(rows);
+    const countryClaims = await tallyCountryClaims(rows);
+    if (requestId !== battlefieldRequestId) return; // superseded by a later open
+
+    const allClaims = [...countryClaims, ...barClaims].sort((a, b) => b.count - a.count);
+
+    const claimantIds = Array.from(new Set(allClaims.map((c) => c.claimantId)));
+    const profileById = {};
+    if (claimantIds.length) {
+      const { data: profiles, error: profilesError } = await supabaseClient
+        .from("profiles")
+        .select("id, username, avatar_emoji")
+        .in("id", claimantIds);
+      if (profilesError) throw profilesError;
+      (profiles || []).forEach((p) => {
+        profileById[p.id] = p;
+      });
+    }
+
+    const me = [];
+    const other = [];
+    allClaims.forEach((claim) => {
+      const isMe = Boolean(currentUser && claim.claimantId === currentUser.id);
+      const profile = profileById[claim.claimantId];
+      const entry = {
+        type: claim.type,
+        name: claim.name,
+        count: claim.count,
+        claimantName: (profile && profile.username) || "Beer Explorer",
+        claimantEmoji: (profile && profile.avatar_emoji) || "🍺",
+      };
+      (isMe ? me : other).push(entry);
+    });
+
+    battlefieldClaims = { me, other };
+    battlefieldCountMeEl.textContent = me.length.toLocaleString("en-US");
+    battlefieldCountOtherEl.textContent = other.length.toLocaleString("en-US");
+    battlefieldStatusEl.hidden = true;
+    renderBattlefieldList();
+  } catch (err) {
+    if (requestId !== battlefieldRequestId) return;
+    console.error("Failed to load battlefield:", err);
+    battlefieldStatusEl.hidden = false;
+    battlefieldStatusEl.classList.add("field-hint-error");
+    battlefieldStatusEl.textContent = "Couldn't load the battlefield — try again.";
+  }
 }
 
 /* ---------------------------------------------------------------- *
@@ -2097,5 +2697,6 @@ function makeSheetDraggable(sheet, backdrop, handle, closeFn) {
 makeSheetDraggable(beerSheet, sheetBackdrop, beerSheet.querySelector(".sheet-handle"), closeBeerSheet);
 makeSheetDraggable(profileSheet, profileSheetBackdrop, profileSheet.querySelector(".sheet-handle"), closeProfileSheet);
 makeSheetDraggable(statsSheet, statsSheetBackdrop, statsSheet.querySelector(".sheet-handle"), closeStatsSheet);
+makeSheetDraggable(battlefieldSheet, battlefieldSheetBackdrop, battlefieldSheet.querySelector(".sheet-handle"), closeBattlefieldSheet);
 
 })();
