@@ -143,17 +143,18 @@ html, body {
 }
 
 /* ------------------------------------------------------------------ *
- *  Counter time-range control: an icon-only button (exact look of the
- *  top-right menu button, via the shared .menu-icon-btn class) that
- *  reveals a segmented pill to its right. Top is set by JS
- *  (positionCounterRangePanel in app.js) so it always clears the
- *  counter's block, whatever size that renders at.
+ *  Counter time-range control ("Timing"): an icon-only button (exact
+ *  look of the top-right menu button, via the shared .menu-icon-btn
+ *  class) that reveals a segmented pill to its right. Sits top-left,
+ *  the mirror image of the top-right menu button — same top offset,
+ *  same z-index, left edge instead of right.
  * ------------------------------------------------------------------ */
 
 .counter-range-panel {
   position: absolute;
+  top: calc(16px + env(safe-area-inset-top));
   left: calc(16px + env(safe-area-inset-left));
-  z-index: 5;
+  z-index: 25;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -323,6 +324,7 @@ html, body {
   color: #241a04;
   font: 500 14px/20px "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   letter-spacing: 0.006em;
+  white-space: nowrap;
   cursor: pointer;
   box-shadow: 0 4px 18px rgba(255, 214, 110, 0.35), 0 2px 8px rgba(0, 0, 0, 0.35);
 }
@@ -334,6 +336,94 @@ html, body {
 #add-beer-btn:focus-visible {
   outline: 2px solid #fff6d6;
   outline-offset: 3px;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Live activity feed: Twitch-chat-style notifications that pop in
+ *  just above the CTA and get pushed upward as new ones arrive.
+ *  Bottom-anchored (justify-content: flex-end) so the newest item is
+ *  always the one nearest the button; overflow: hidden + a capped
+ *  max-height mean older items are simply clipped off the top once
+ *  the stack would otherwise cross the vertical middle of the screen
+ *  — it can never grow past that line, whatever the screen size.
+ *  Non-interactive (pointer-events: none) so it never blocks taps to
+ *  the globe underneath.
+ * ------------------------------------------------------------------ */
+
+.beer-feed {
+  position: absolute;
+  left: 50%;
+  bottom: calc(88px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 8;
+  width: min(94vw, 380px);
+  max-height: calc(50vh - 88px - env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px);
+  mask-image: linear-gradient(to bottom, transparent, #000 28px);
+}
+
+.beer-feed-item {
+  flex: 0 0 auto;
+  max-width: 100%;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(18, 20, 30, 0.72);
+  backdrop-filter: blur(6px) saturate(160%);
+  -webkit-backdrop-filter: blur(6px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #f5f6fa;
+  font: 500 12.5px/1.35 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-align: center;
+  word-break: break-word;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(10px) scale(0.96);
+  animation: beer-feed-item-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.beer-feed-item strong {
+  color: #ffdb7a;
+  font-weight: 700;
+}
+
+/* Milestone items (country discovered / new #1) get a gold outline so
+   they read as a step up from a routine "added a new beer" line. */
+.beer-feed-item.is-milestone {
+  border-color: rgba(255, 219, 122, 0.55);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 219, 122, 0.18) inset;
+}
+
+.beer-feed-item.is-leaving {
+  animation: beer-feed-item-out 0.28s ease forwards;
+}
+
+@keyframes beer-feed-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes beer-feed-item-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
 }
 
 /* Small photo thumbnail at the top of the drawer — a glance back at

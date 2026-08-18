@@ -120,11 +120,10 @@ setTimeout(() => {
 }, REMAINING_FADE_DELAY_MS);
 
 /* ---------------------------------------------------------------- *
- *  Counter time-range control: lets the person scope both the giant
- *  counter and the globe's beer lights to the last 24h, the last
- *  week, or all time. An icon-only button, pinned below the counter
- *  on the screen's left edge (positioned by JS so it always clears
- *  the counter's block regardless of its responsive font size);
+ *  Counter time-range control ("Timing"): lets the person scope both
+ *  the giant counter and the globe's beer lights to the last 24h, the
+ *  last week, or all time. An icon-only button pinned top-left (the
+ *  mirror of the top-right menu button, same top offset, set in CSS);
  *  tapping it reveals a segmented pill to its right whose active
  *  segment is itself a draggable thumb — press and drag it across the
  *  pill like an iOS segmented control, or just tap a label directly.
@@ -138,19 +137,6 @@ const counterRangeTrack = document.getElementById("counter-range-track");
 const counterRangeThumb = document.getElementById("counter-range-thumb");
 const counterRangeSegs = Array.from(document.querySelectorAll(".counter-range-seg"));
 const beerCounterContainer = document.getElementById("beer-counter");
-
-function positionCounterRangePanel() {
-  if (!counterRangePanel || !beerCounterContainer) return;
-  const rect = beerCounterContainer.getBoundingClientRect();
-  counterRangePanel.style.top = `${Math.round(rect.bottom + 12)}px`;
-}
-
-positionCounterRangePanel();
-window.addEventListener("resize", positionCounterRangePanel);
-// The counter's own load-in animation doesn't change its height (one
-// line at a fixed font size throughout), but a re-check shortly after
-// covers any font/layout settling right after first paint.
-setTimeout(positionCounterRangePanel, COUNTER_LOAD_DURATION_MS);
 
 function openCounterRangeTrack() {
   counterRangeTrack.hidden = false;
@@ -1382,6 +1368,249 @@ async function saveBeerEntryInBackground(entry) {
     console.error("Failed to save beer entry to the server:", err);
   }
 }
+
+/* ---------------------------------------------------------------- *
+ *  Live activity feed: a Twitch-chat-style ticker, pinned just above
+ *  the "Add my beer" button (see #beer-feed in style.css), that
+ *  broadcasts what everyone using the app is doing right now:
+ *    "[user] added a new beer"
+ *    "[country] discovered! First beer added there!"
+ *    "[user] is now first on ranking"
+ *  Driven by a Supabase Realtime subscription on beer_entries inserts
+ *  — every connected client (including the one who just logged the
+ *  beer) gets the same event, so the feed is the same for everyone.
+ * ---------------------------------------------------------------- */
+
+const beerFeedEl = document.getElementById("beer-feed");
+const BEER_FEED_ITEM_LIFETIME_MS = 6500;
+const BEER_FEED_MAX_ITEMS = 30; // safety cap on DOM nodes, well above what's ever visible
+
+let beerFeedProfileCache = {}; // user_id -> { username, avatar_emoji } | null
+let beerFeedKnownCountryCodes = new Set();
+let beerFeedTopUserId = null;
+let beerFeedSeeded = false;
+
+// Builds a message out of plain-text segments (some bolded) without
+// ever touching innerHTML — usernames are free text the person chose
+// themselves, so this keeps the feed safe from markup injection.
+function buildFeedMessageNode(segments) {
+  const frag = document.createDocumentFragment();
+  segments.forEach(([text, strong]) => {
+    if (strong) {
+      const el = document.createElement("strong");
+      el.textContent = text;
+      frag.appendChild(el);
+    } else {
+      frag.appendChild(document.createTextNode(text));
+    }
+  });
+  return frag;
+}
+
+function pushBeerFeedMessage(segments, { milestone = false } = {}) {
+  if (!beerFeedEl) return;
+
+  while (beerFeedEl.children.length >= BEER_FEED_MAX_ITEMS) {
+    beerFeedEl.removeChild(beerFeedEl.firstElementChild);
+  }
+
+  const item = document.createElement("div");
+  item.className = "beer-feed-item" + (milestone ? " is-milestone" : "");
+  item.appendChild(buildFeedMessageNode(segments));
+  beerFeedEl.appendChild(item);
+
+  setTimeout(() => {
+    item.classList.add("is-leaving");
+    item.addEventListener(
+      "animationend",
+      () => {
+        if (item.parentNode) item.parentNode.removeChild(item);
+      },
+      { once: true }
+    );
+  }, BEER_FEED_ITEM_LIFETIME_MS);
+}
+
+async function getBeerFeedProfile(userId) {
+  if (!userId) return null;
+  if (userId in beerFeedProfileCache) return beerFeedProfileCache[userId];
+  try {
+    const { data, error } = await supabaseClient
+      .from("profiles")
+      .select("username, avatar_emoji")
+      .eq("id", userId)
+      .single();
+    if (error) throw error;
+    beerFeedProfileCache[userId] = data;
+    return data;
+  } catch (err) {
+    console.warn("Beer feed: failed to load profile for", userId, err);
+    beerFeedProfileCache[userId] = null;
+    return null;
+  }
+}
+
+function beerFeedDisplayName(profile) {
+  return (profile && profile.username) || "Beer Explorer";
+}
+
+// Seeds the countries the feed already knows about (so it doesn't
+// re-announce a country on the very first entry it happens to see)
+// and today's #1 user, both from the busiest existing entries — same
+// bounded, busiest-bucket-first approach as the leaderboard/profile
+// map use, so a big table doesn't mean hammering Nominatim on load.
+const BEER_FEED_SEED_GEOCODE_LIMIT = 40;
+
+async function seedBeerFeedKnownCountries() {
+  try {
+    const { data, error } = await supabaseClient
+      .from("beer_entries")
+      .select("bar_lat, bar_lng")
+      .not("bar_lat", "is", null)
+      .not("bar_lng", "is", null);
+    if (error) throw error;
+
+    const bucketCounts = {};
+    const bucketCoords = {};
+    (data || []).forEach((row) => {
+      const lat = Number(row.bar_lat);
+      const lng = Number(row.bar_lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const key = roundCoordKey(lat, lng);
+      bucketCounts[key] = (bucketCounts[key] || 0) + 1;
+      if (!bucketCoords[key]) bucketCoords[key] = { lat, lng };
+    });
+
+    const busiestBuckets = topTallyEntries(bucketCounts, BEER_FEED_SEED_GEOCODE_LIMIT);
+    const cache = loadGeocodeCache();
+    let cacheDirty = false;
+
+    for (const [key] of busiestBuckets) {
+      let resolved = cache[key];
+      if (!resolved || resolved.country_code === undefined) {
+        const { lat, lng } = bucketCoords[key];
+        try {
+          resolved = await reverseGeocodePlace(lat, lng);
+        } catch (err) {
+          resolved = { city: null, country: null, country_code: null };
+        }
+        cache[key] = resolved;
+        cacheDirty = true;
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      if (resolved.country_code) beerFeedKnownCountryCodes.add(resolved.country_code.toUpperCase());
+    }
+
+    if (cacheDirty) saveGeocodeCache(cache);
+  } catch (err) {
+    console.warn("Beer feed: failed to seed known countries:", err);
+  }
+}
+
+async function seedBeerFeedTopUser() {
+  try {
+    const { data, error } = await supabaseClient.from("beer_entries").select("user_id").not("user_id", "is", null);
+    if (error) throw error;
+    const tally = {};
+    (data || []).forEach((row) => {
+      tally[row.user_id] = (tally[row.user_id] || 0) + 1;
+    });
+    const top = topTallyEntries(tally, 1);
+    beerFeedTopUserId = top.length ? top[0][0] : null;
+  } catch (err) {
+    console.warn("Beer feed: failed to seed top user:", err);
+  }
+}
+
+// Reverse-geocodes a fresh entry's coordinates (reusing the shared
+// geocode cache) and, if it's this app's first-ever entry in that
+// country, announces it.
+async function checkBeerFeedCountryDiscovered(lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+  const key = roundCoordKey(lat, lng);
+  const cache = loadGeocodeCache();
+  let resolved = cache[key];
+  if (!resolved || resolved.country_code === undefined) {
+    try {
+      resolved = await reverseGeocodePlace(lat, lng);
+    } catch (err) {
+      return;
+    }
+    cache[key] = resolved;
+    saveGeocodeCache(cache);
+  }
+  if (!resolved.country_code) return;
+  const code = resolved.country_code.toUpperCase();
+  if (beerFeedKnownCountryCodes.has(code)) return;
+  beerFeedKnownCountryCodes.add(code);
+  pushBeerFeedMessage(
+    [
+      [resolved.country || code, true],
+      [" discovered! First beer added there!", false],
+    ],
+    { milestone: true }
+  );
+}
+
+// Recomputes the all-time #1 by entry count and announces it only
+// when the top user actually changed.
+async function checkBeerFeedRankingChange() {
+  try {
+    const { data, error } = await supabaseClient.from("beer_entries").select("user_id").not("user_id", "is", null);
+    if (error) throw error;
+    const tally = {};
+    (data || []).forEach((row) => {
+      tally[row.user_id] = (tally[row.user_id] || 0) + 1;
+    });
+    const top = topTallyEntries(tally, 1);
+    if (!top.length) return;
+    const [newTopId] = top[0];
+    if (newTopId === beerFeedTopUserId) return;
+    beerFeedTopUserId = newTopId;
+    const profile = await getBeerFeedProfile(newTopId);
+    pushBeerFeedMessage(
+      [
+        [beerFeedDisplayName(profile), true],
+        [" is now first on ranking", false],
+      ],
+      { milestone: true }
+    );
+  } catch (err) {
+    console.warn("Beer feed: failed to check ranking change:", err);
+  }
+}
+
+async function handleBeerFeedInsert(payload) {
+  const row = payload && payload.new;
+  if (!row) return;
+
+  const profile = await getBeerFeedProfile(row.user_id);
+  pushBeerFeedMessage([
+    [beerFeedDisplayName(profile), true],
+    [" added a new beer", false],
+  ]);
+
+  const lat = Number(row.bar_lat);
+  const lng = Number(row.bar_lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    checkBeerFeedCountryDiscovered(lat, lng);
+  }
+  checkBeerFeedRankingChange();
+}
+
+async function initBeerFeed() {
+  if (!beerFeedEl || beerFeedSeeded) return;
+  beerFeedSeeded = true;
+
+  await Promise.all([seedBeerFeedKnownCountries(), seedBeerFeedTopUser()]);
+
+  supabaseClient
+    .channel("beer-feed")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "beer_entries" }, handleBeerFeedInsert)
+    .subscribe();
+}
+
+initBeerFeed();
 
 /* ---------------------------------------------------------------- *
  *  Profile: top-right button opens a bottom drawer with the signed-in

@@ -71,14 +71,15 @@
     <span id="beer-counter-remaining" aria-hidden="true"></span>
   </div>
 
-  <!-- Time-range control: icon-only button, pinned below the counter
-       on the left edge of the screen. Tapping it reveals a long pill
-       to its right with three segments (All time / Week / 24h); the
-       active segment is itself a draggable thumb, like an iOS
-       segmented control you can drag your thumb across instead of
-       only tapping. Filters both the counter above and the beer
-       lights on the globe. Icon button matches the top-right menu
-       button's frosted-glass look exactly (shared .menu-icon-btn). -->
+  <!-- Time-range control ("Timing"): icon-only button, pinned
+       top-left — the mirror of the top-right menu button. Tapping it
+       reveals a long pill to its right with three segments (All time
+       / Week / 24h); the active segment is itself a draggable thumb,
+       like an iOS segmented control you can drag your thumb across
+       instead of only tapping. Filters both the counter above and the
+       beer lights on the globe. Icon button matches the top-right
+       menu button's frosted-glass look exactly (shared
+       .menu-icon-btn). -->
   <div id="counter-range-panel" class="counter-range-panel">
     <button
       id="counter-range-btn"
@@ -113,6 +114,15 @@
       </button>
     </div>
   </div>
+
+  <!-- Live activity feed: Twitch-chat-style notifications ("[user]
+       added a new beer", country-discovered, ranking-change) that pop
+       in just above the CTA and get pushed upward as new ones arrive.
+       Bottom-anchored + overflow:hidden (see #beer-feed in style.css)
+       so it never grows past the vertical middle of the screen —
+       older items are simply clipped off the top rather than pushing
+       the button around. Populated entirely by JS (initBeerFeed). -->
+  <div id="beer-feed" class="beer-feed" aria-live="polite" aria-atomic="false"></div>
 
   <!-- CTA: triggers the camera below. capture="environment" opens the
        rear camera directly on mobile; falls back to a plain file picker
