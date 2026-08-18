@@ -366,6 +366,16 @@ async function refreshBeerCounterFromServer() {
 
 initSupabaseUser();
 
+const satelliteTogglePanel = document.getElementById("satellite-toggle-panel");
+const satelliteToggleBtn = document.getElementById("satellite-toggle-btn");
+
+// Populated inside style.load below with every fill/background layer id
+// from the base vector style — exactly the layers that need hiding when
+// satellite view is on, since otherwise they'd paint over the imagery.
+const baseFillLayerIds = [];
+const baseBackgroundLayerIds = [];
+let satelliteEnabled = false;
+
 const map = new maplibregl.Map({
   container: "map",
   // Free, no API key, vector style with good default cartography.
@@ -397,17 +407,47 @@ map.on("style.load", () => {
   // was designed as an overlay basemap and ships several layers (water,
   // landcover) with fill-opacity < 1, which is fine on a flat opaque page
   // background but on the globe lets you see straight through the sphere.
+  // Fill/background layer ids are also collected here — they're exactly
+  // the layers that need hiding when satellite view is switched on below,
+  // since otherwise they'd paint straight over the satellite imagery.
   map.getStyle().layers.forEach((layer) => {
     if (layer.type === "symbol") {
       map.setLayoutProperty(layer.id, "visibility", "none");
     }
     if (layer.type === "fill") {
       map.setPaintProperty(layer.id, "fill-opacity", 1);
+      baseFillLayerIds.push(layer.id);
     }
     if (layer.type === "background") {
       map.setPaintProperty(layer.id, "background-opacity", 1);
+      baseBackgroundLayerIds.push(layer.id);
     }
   });
+
+  // Satellite view: a free, no-API-key raster imagery layer (EOX
+  // Sentinel-2 cloudless — https://s2maps.eu, CC BY 4.0) added
+  // underneath the vector style's line/border layers so those still
+  // show through as a hybrid look when satellite is toggled on.
+  // Starts hidden; setSatelliteView below flips it (and the base
+  // fill/background layers it needs to hide) on tap of the top-right
+  // toggle button.
+  const firstLineLayer = map.getStyle().layers.find((layer) => layer.type === "line");
+  map.addSource("satellite", {
+    type: "raster",
+    tiles: ["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg"],
+    tileSize: 256,
+    attribution: "Sentinel-2 cloudless — s2maps.eu by EOX IT Services GmbH",
+  });
+  map.addLayer(
+    {
+      id: "satellite",
+      type: "raster",
+      source: "satellite",
+      layout: { visibility: "none" },
+    },
+    firstLineLayer ? firstLineLayer.id : undefined
+  );
+  satelliteToggleBtn.disabled = false;
 
   // Atmosphere/sky. Note: MapLibre v5+ removed the old setFog() API —
   // fog properties now live inside setSky() instead.
@@ -450,6 +490,26 @@ map.on("style.load", () => {
   });
   map.once("moveend", startAutoRotate);
 });
+
+/* ---------------------------------------------------------------- *
+ *  Satellite view toggle: swaps the vector fill/background layers for
+ *  the raster imagery layer added above, keeping line/border layers
+ *  on top for a hybrid look. No map.setStyle() involved, so none of
+ *  the globe/sky/light/beer-lights setup above needs to be redone —
+ *  this only ever flips layer visibility on the style already loaded.
+ * ---------------------------------------------------------------- */
+
+function setSatelliteView(enabled) {
+  satelliteEnabled = enabled;
+  map.setLayoutProperty("satellite", "visibility", enabled ? "visible" : "none");
+  const vectorVisibility = enabled ? "none" : "visible";
+  baseFillLayerIds.forEach((id) => map.setLayoutProperty(id, "visibility", vectorVisibility));
+  baseBackgroundLayerIds.forEach((id) => map.setLayoutProperty(id, "visibility", vectorVisibility));
+  satelliteToggleBtn.classList.toggle("is-active", enabled);
+  satelliteToggleBtn.setAttribute("aria-pressed", String(enabled));
+}
+
+satelliteToggleBtn.addEventListener("click", () => setSatelliteView(!satelliteEnabled));
 
 /* ---------------------------------------------------------------- *
  *  Starfield: tracks the globe's rotation so the sky behind it isn't
@@ -1963,12 +2023,13 @@ const profileStatLitresEl = document.getElementById("profile-stat-litres");
 const profileFavoriteEl = document.getElementById("profile-favorite");
 const profileStatusEl = document.getElementById("profile-status");
 
-// Hides the top-left schedule/time-range button while a drawer opened
-// from the menu popover (Profil, Stats, Battlefield) is open — "Add
-// my beer" isn't reached from that popover, so it's left alone.
+// Hides the top-left schedule/time-range button, and the top-right
+// satellite toggle, while a drawer opened from the menu popover
+// (Profil, Stats, Battlefield) is open — "Add my beer" isn't reached
+// from that popover, so it's left alone.
 function setScheduleButtonVisible(visible) {
-  if (!counterRangePanel) return;
-  counterRangePanel.classList.toggle("is-hidden", !visible);
+  if (counterRangePanel) counterRangePanel.classList.toggle("is-hidden", !visible);
+  if (satelliteTogglePanel) satelliteTogglePanel.classList.toggle("is-hidden", !visible);
 }
 
 

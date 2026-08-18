@@ -57,6 +57,23 @@
     </div>
   </div>
 
+  <!-- Satellite view toggle: sits in its own column below the menu
+       button (shared .menu-icon-btn look), disabled until the
+       satellite raster layer has actually been added to the map (see
+       setSatelliteView in app.js). -->
+  <div id="satellite-toggle-panel" class="satellite-toggle-panel">
+    <button
+      id="satellite-toggle-btn"
+      class="menu-icon-btn"
+      type="button"
+      aria-pressed="false"
+      aria-label="Toggle satellite view"
+      disabled
+    >
+      <span class="material-symbols-rounded" aria-hidden="true">satellite_alt</span>
+    </button>
+  </div>
+
   <!-- Giant animated counter, counts up to 1,000,000 on load. The
        number itself is the only interactive part (opens the stats
        sheet) — the rest of the block stays click-through so it never
