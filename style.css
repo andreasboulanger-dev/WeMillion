@@ -220,9 +220,9 @@ html, body {
   color: currentColor;
 }
 
-/* Each Time icon is a clock glyph with a small badge (∞ / W / 24)
-   centered low on its face, so it reads as "a clock for this range"
-   rather than a bare label. */
+/* Each Time icon is a plain clock face (no hands) with a symbol in
+   place of them — ∞ / W / 24 — so it reads as "a clock for this
+   range" without a real clock's hands implying an actual time. */
 .counter-range-icon {
   position: relative;
   width: 22px;
@@ -232,20 +232,16 @@ html, body {
   justify-content: center;
 }
 
-.counter-range-icon-clock {
-  font-size: 22px;
+.counter-range-icon-infinity,
+.counter-range-icon-glyph {
+  width: 22px;
+  height: 22px;
+  display: block;
   color: currentColor;
 }
 
-.counter-range-icon-badge {
-  position: absolute;
-  left: 50%;
-  top: 58%;
-  transform: translate(-50%, -50%);
-  font: 800 7px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  letter-spacing: -0.02em;
-  color: currentColor;
-  pointer-events: none;
+.counter-range-icon-glyph text {
+  font-family: "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 .popover-icon-row-item.is-active {
@@ -2125,6 +2121,54 @@ html, body {
 
 #battlefield-details .field-label {
   margin-bottom: 0;
+}
+
+.battlefield-team {
+  margin-bottom: 20px;
+}
+
+.battlefield-team-list {
+  list-style: none;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.battlefield-team-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.battlefield-team-row-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.battlefield-team-row-name {
+  flex: 1;
+  min-width: 0;
+  font: 500 13px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.battlefield-team-row.is-you .battlefield-team-row-name {
+  color: #ffdb7a;
+  font-weight: 700;
+}
+
+.battlefield-team-row-count {
+  flex-shrink: 0;
+  font: 600 11px/1 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: rgba(255, 255, 255, 0.45);
 }
 
 #battlefield-status {

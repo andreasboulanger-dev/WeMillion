@@ -3801,23 +3801,28 @@ async function computePlacesLeaderboard(scope, cutoffIso) {
  *  Battlefield drawer — opened from the menu's "Battlefield" item.
  *  A country or bar is "claimed" by whoever has logged the most
  *  beers there. "Me" lists claims the signed-in user currently
- *  holds; "Other" lists claims held by anyone else, with who holds
- *  each one. Bars are grouped by beer_entries.venue_id (resolved to a
- *  venue name via the venues table); countries
- *  reuse the same bucket + reverse-geocode + cache approach as the
- *  stats leaderboard above. The two category cards act as a tiny
- *  two-slide carousel — tapping either swaps the list beneath them.
+ *  holds; "My League" lists claims held by anyone on the user's
+ *  league (including themself) plus a roster of who's on the team;
+ *  "Other" lists claims held by rivals outside that league, with who
+ *  holds each one. Bars are grouped by beer_entries.venue_id (resolved
+ *  to a venue name via the venues table); countries reuse the same
+ *  bucket + reverse-geocode + cache approach as the stats leaderboard
+ *  above. The three category cards act as a tiny carousel — tapping
+ *  any one swaps the content beneath them.
  * ---------------------------------------------------------------- */
 
 const battlefieldSheetBackdrop = document.getElementById("battlefield-sheet-backdrop");
 const battlefieldSheet = document.getElementById("battlefield-sheet");
 const battlefieldCards = Array.from(document.querySelectorAll(".battlefield-card"));
 const battlefieldCountMeEl = document.getElementById("battlefield-count-me");
+const battlefieldCountLeagueEl = document.getElementById("battlefield-count-league");
 const battlefieldCountOtherEl = document.getElementById("battlefield-count-other");
 const battlefieldDetailsLabelEl = document.getElementById("battlefield-details-label");
 const battlefieldListEl = document.getElementById("battlefield-list");
 const battlefieldEmptyEl = document.getElementById("battlefield-empty");
 const battlefieldStatusEl = document.getElementById("battlefield-status");
+const battlefieldTeamEl = document.getElementById("battlefield-team");
+const battlefieldTeamListEl = document.getElementById("battlefield-team-list");
 
 // Kept modest for the same reason as LEADERBOARD_GEOCODE_BUCKET_LIMIT
 // above — Nominatim's free tier expects roughly one request/sec, and
@@ -3825,7 +3830,8 @@ const battlefieldStatusEl = document.getElementById("battlefield-status");
 const BATTLEFIELD_GEOCODE_BUCKET_LIMIT = 30;
 
 let battlefieldSide = "me";
-let battlefieldClaims = null; // { me: [...], other: [...] }, filled in by loadBattlefield
+let battlefieldClaims = null; // { me: [...], league: [...], other: [...] }, filled in by loadBattlefield
+let battlefieldTeam = null; // [{ id, name, isMe, count }], filled in by loadBattlefield
 let battlefieldRequestId = 0; // guards against a slow, stale load clobbering a newer one
 
 function openBattlefieldSheet() {
@@ -3876,8 +3882,40 @@ function setBattlefieldSide(side) {
     card.classList.toggle("is-selected", selected);
     card.setAttribute("aria-selected", selected ? "true" : "false");
   });
-  battlefieldDetailsLabelEl.textContent = side === "me" ? "Your territory" : "Held by others";
+  battlefieldDetailsLabelEl.textContent =
+    side === "me" ? "Your territory" : side === "league" ? "Our territory" : "Held by others";
+  battlefieldTeamEl.hidden = side !== "league";
+  if (side === "league") renderBattlefieldTeam();
   renderBattlefieldList();
+}
+
+function renderBattlefieldTeam() {
+  battlefieldTeamListEl.innerHTML = "";
+  if (!battlefieldTeam || !battlefieldTeam.length) return;
+
+  battlefieldTeam.forEach((member) => {
+    const li = document.createElement("li");
+    li.className = "battlefield-team-row";
+    li.classList.toggle("is-you", member.isMe);
+
+    const icon = document.createElement("span");
+    icon.className = "battlefield-team-row-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "👤";
+    li.appendChild(icon);
+
+    const name = document.createElement("span");
+    name.className = "battlefield-team-row-name";
+    name.textContent = member.name;
+    li.appendChild(name);
+
+    const count = document.createElement("span");
+    count.className = "battlefield-team-row-count";
+    count.textContent = `${member.count.toLocaleString("en-US")} claim${member.count === 1 ? "" : "s"}`;
+    li.appendChild(count);
+
+    battlefieldTeamListEl.appendChild(li);
+  });
 }
 
 function renderBattlefieldList() {
@@ -3885,11 +3923,15 @@ function renderBattlefieldList() {
   if (!battlefieldClaims) return;
 
   const items = battlefieldClaims[battlefieldSide] || [];
-  battlefieldEmptyEl.hidden = items.length > 0;
-  battlefieldEmptyEl.textContent =
-    battlefieldSide === "me"
-      ? "Nothing claimed yet — log a beer somewhere to start claiming it."
-      : "No rivals hold any territory yet.";
+  const noLeague = battlefieldSide === "league" && !currentLeague;
+  battlefieldEmptyEl.hidden = items.length > 0 && !noLeague;
+  battlefieldEmptyEl.textContent = noLeague
+    ? "Join a league from your Profile to start claiming territory together."
+    : battlefieldSide === "me"
+    ? "Nothing claimed yet — log a beer somewhere to start claiming it."
+    : battlefieldSide === "league"
+    ? "Your team hasn't claimed any territory yet."
+    : "No rivals hold any territory yet.";
 
   items.forEach((item) => {
     const li = document.createElement("li");
@@ -3912,7 +3954,7 @@ function renderBattlefieldList() {
     const sub = document.createElement("span");
     sub.className = "battlefield-row-sub";
     sub.textContent =
-      battlefieldSide === "other"
+      battlefieldSide === "other" || battlefieldSide === "league"
         ? `${item.claimantEmoji} Held by ${item.claimantName}`
         : item.type === "country"
         ? "Country"
@@ -4009,14 +4051,21 @@ async function tallyCountryClaims(rows) {
 async function loadBattlefield() {
   const requestId = ++battlefieldRequestId;
   battlefieldCountMeEl.textContent = "–";
+  battlefieldCountLeagueEl.textContent = "–";
   battlefieldCountOtherEl.textContent = "–";
   battlefieldListEl.innerHTML = "";
+  battlefieldTeamListEl.innerHTML = "";
   battlefieldEmptyEl.hidden = true;
   battlefieldStatusEl.hidden = false;
   battlefieldStatusEl.classList.remove("field-hint-error");
   battlefieldStatusEl.textContent = "Loading…";
 
   try {
+    // Refresh league membership in case it changed elsewhere (another
+    // device, or the profile drawer) since this was last loaded.
+    await loadCurrentLeagueMembership();
+    const leagueMemberIds = await ensureLeagueMemberIds();
+
     const { data, error } = await supabaseClient.from("beer_entries").select("user_id, venue_id, bar_lat, bar_lng");
     if (error) throw error;
     const rows = data || [];
@@ -4047,13 +4096,17 @@ async function loadBattlefield() {
 
     const allClaims = [...countryClaims, ...resolvedBarClaims].sort((a, b) => b.count - a.count);
 
-    const claimantIds = Array.from(new Set(allClaims.map((c) => c.claimantId)));
+    // Union claim holders with league members so a teammate who
+    // hasn't claimed anything yet still resolves to a display name
+    // for the Team list below.
+    const profileIds = new Set(allClaims.map((c) => c.claimantId));
+    leagueMemberIds.forEach((id) => profileIds.add(id));
     const profileById = {};
-    if (claimantIds.length) {
+    if (profileIds.size) {
       const { data: profiles, error: profilesError } = await supabaseClient
         .from("profiles")
         .select("id, username")
-        .in("id", claimantIds);
+        .in("id", Array.from(profileIds));
       if (profilesError) throw profilesError;
       (profiles || []).forEach((p) => {
         profileById[p.id] = p;
@@ -4061,25 +4114,50 @@ async function loadBattlefield() {
     }
 
     const me = [];
+    const league = [];
     const other = [];
+    const teamClaimCounts = {}; // claimantId -> number of claims, for the Team roster
     allClaims.forEach((claim) => {
       const isMe = Boolean(currentUser && claim.claimantId === currentUser.id);
+      const isTeammate = leagueMemberIds.has(claim.claimantId);
       const profile = profileById[claim.claimantId];
       const entry = {
         type: claim.type,
         name: claim.name,
         count: claim.count,
-        claimantName: (profile && profile.username) || "Beer Explorer",
+        claimantName: isMe ? "You" : (profile && profile.username) || "Beer Explorer",
         claimantEmoji: "🍺",
       };
-      (isMe ? me : other).push(entry);
+      if (isMe) me.push(entry);
+      if (isTeammate) {
+        league.push(entry);
+        teamClaimCounts[claim.claimantId] = (teamClaimCounts[claim.claimantId] || 0) + 1;
+      } else if (!isMe) {
+        // "Other" stays rivals only — once you're in a league,
+        // teammates no longer count as opponents.
+        other.push(entry);
+      }
     });
 
-    battlefieldClaims = { me, other };
+    const team = Array.from(leagueMemberIds).map((id) => {
+      const isMe = Boolean(currentUser && id === currentUser.id);
+      return {
+        id,
+        name: isMe ? "You" : (profileById[id] && profileById[id].username) || "Beer Explorer",
+        isMe,
+        count: teamClaimCounts[id] || 0,
+      };
+    });
+    team.sort((a, b) => (a.isMe ? -1 : b.isMe ? 1 : a.name.localeCompare(b.name)));
+
+    battlefieldClaims = { me, league, other };
+    battlefieldTeam = team;
     battlefieldCountMeEl.textContent = me.length.toLocaleString("en-US");
+    battlefieldCountLeagueEl.textContent = currentLeague ? league.length.toLocaleString("en-US") : "–";
     battlefieldCountOtherEl.textContent = other.length.toLocaleString("en-US");
     battlefieldStatusEl.hidden = true;
     renderBattlefieldList();
+    if (battlefieldSide === "league") renderBattlefieldTeam();
   } catch (err) {
     if (requestId !== battlefieldRequestId) return;
     console.error("Failed to load battlefield:", err);

@@ -129,20 +129,34 @@
         <span id="counter-range-thumb" class="popover-icon-row-thumb" aria-hidden="true"></span>
         <button type="button" class="popover-icon-row-item is-active" id="view-item-range-all" data-range="all" role="radio" aria-checked="true" aria-label="All time">
           <span class="counter-range-icon" aria-hidden="true">
-            <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
-            <span class="counter-range-icon-badge">&#8734;</span>
+            <svg class="counter-range-icon-infinity" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
+              <g transform="translate(3.144,3) scale(0.75)">
+                <path
+                  d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.133-8-12.739-8-4.585 0-4.585 8 0 8 5.606 0 7.644-8 12.74-8z"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </g>
+            </svg>
           </span>
         </button>
         <button type="button" class="popover-icon-row-item" id="view-item-range-week" data-range="week" role="radio" aria-checked="false" aria-label="Week">
           <span class="counter-range-icon" aria-hidden="true">
-            <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
-            <span class="counter-range-icon-badge">W</span>
+            <svg class="counter-range-icon-glyph" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
+              <text x="12" y="15.3" text-anchor="middle" font-size="9" font-weight="800" fill="currentColor">W</text>
+            </svg>
           </span>
         </button>
         <button type="button" class="popover-icon-row-item" id="view-item-range-24h" data-range="24h" role="radio" aria-checked="false" aria-label="Last 24 hours">
           <span class="counter-range-icon" aria-hidden="true">
-            <span class="material-symbols-rounded counter-range-icon-clock">schedule</span>
-            <span class="counter-range-icon-badge">24</span>
+            <svg class="counter-range-icon-glyph" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
+              <text x="12" y="15.2" text-anchor="middle" font-size="7.6" font-weight="800" fill="currentColor">24</text>
+            </svg>
           </span>
         </button>
       </div>
@@ -476,10 +490,11 @@
   </div>
 
   <!-- Battlefield drawer: opened from the menu's "Battlefield" item.
-       Two cards ("Me" / "Other") sit side by side like a tiny
-       carousel; tapping one swaps the list of claimed countries/bars
-       below it. A "claim" on a country or bar goes to whoever has
-       logged the most beers there. -->
+       Three cards ("Me" / "My League" / "Other") sit side by side
+       like a tiny carousel; tapping one swaps the content below it.
+       "My League" also shows a Team roster above its territory list.
+       A "claim" on a country or bar goes to whoever has logged the
+       most beers there. -->
   <div id="battlefield-sheet-backdrop" class="sheet-backdrop" hidden></div>
   <div id="battlefield-sheet" class="bottom-sheet bottom-sheet-full" role="dialog" aria-modal="true" aria-labelledby="battlefield-sheet-title" hidden>
     <div class="sheet-handle" aria-hidden="true"></div>
@@ -497,6 +512,11 @@
         <span class="battlefield-card-count" id="battlefield-count-me">–</span>
         <span class="battlefield-card-title">Me</span>
       </button>
+      <button type="button" class="battlefield-card" id="battlefield-card-league" data-side="league" role="tab" aria-selected="false">
+        <span class="battlefield-card-icon" aria-hidden="true">🛡️</span>
+        <span class="battlefield-card-count" id="battlefield-count-league">–</span>
+        <span class="battlefield-card-title">My League</span>
+      </button>
       <button type="button" class="battlefield-card" id="battlefield-card-other" data-side="other" role="tab" aria-selected="false">
         <span class="battlefield-card-icon" aria-hidden="true">⚔️</span>
         <span class="battlefield-card-count" id="battlefield-count-other">–</span>
@@ -505,6 +525,11 @@
     </div>
 
     <div id="battlefield-details">
+      <div id="battlefield-team" class="battlefield-team" hidden>
+        <span class="field-label">Team</span>
+        <ul id="battlefield-team-list" class="battlefield-team-list"></ul>
+      </div>
+
       <span class="field-label" id="battlefield-details-label">Your territory</span>
       <ol id="battlefield-list" class="battlefield-list" aria-labelledby="battlefield-details-label"></ol>
       <p id="battlefield-empty" class="field-hint" hidden></p>
