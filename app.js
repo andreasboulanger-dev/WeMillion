@@ -1987,6 +1987,12 @@ async function saveBeerEntryInBackground(entry) {
       profileActivityLoaded = true;
       loadProfileActivity();
     }
+    const who = (currentProfile && currentProfile.username) || "Someone";
+    notifyOtherUsers(
+      "🍺 New beer logged!",
+      `${who} just logged a beer${entry.barName ? ` at ${entry.barName}` : ""}.`,
+      "/"
+    );
   } catch (err) {
     console.error("Failed to save beer entry to the server:", err);
   }
@@ -2245,6 +2251,12 @@ const profileActivityEmptyEl = document.getElementById("profile-activity-empty")
 const profileActivityStatusEl = document.getElementById("profile-activity-status");
 const profileFavoriteEl = document.getElementById("profile-favorite");
 const profileStatusEl = document.getElementById("profile-status");
+const profileRecoveryCardEl = document.getElementById("profile-recovery-card");
+const profileRecoveryLabelEl = document.getElementById("profile-recovery-label");
+const profileRecoveryEmailInput = document.getElementById("profile-recovery-email-input");
+const profileRecoverySaveBtn = document.getElementById("profile-recovery-save-btn");
+const profileRecoverySigninBtn = document.getElementById("profile-recovery-signin-btn");
+const profileRecoveryStatusEl = document.getElementById("profile-recovery-status");
 const profileLeagueNoneEl = document.getElementById("profile-league-none");
 const profileLeagueActiveEl = document.getElementById("profile-league-active");
 const profileLeagueCodeInput = document.getElementById("profile-league-code-input");
@@ -2286,6 +2298,8 @@ function openProfileSheet() {
   loadProfileStats();
   refreshProfileMapCoverage();
   renderProfileLeague();
+  updateProfileNotificationsBtn();
+  clearProfileNotificationsStatus();
 }
 
 function closeProfileSheet() {
@@ -2449,6 +2463,7 @@ function renderProfile() {
   profileStatusEl.classList.remove("field-hint-error");
   if (activeMenuIcon === "profile") renderMenuButtonIcon();
   profileUsernameInput.value = currentProfile.username || "";
+  renderProfileRecovery();
 
   const created = currentProfile.created_at ? new Date(currentProfile.created_at) : null;
   profileStatSinceEl.textContent =
@@ -2838,8 +2853,154 @@ async function ensureLeagueMemberIds() {
   return leagueMemberIdsPromise;
 }
 
+/* ---------------------------------------------------------------- *
+ *  Web push — lets a signed-in user opt in to real OS/browser push
+ *  notifications (works even with the app closed/backgrounded), and
+ *  fires one to every other user whenever this user logs a beer.
+ *  Three moving pieces:
+ *   - sw.js: the service worker that actually displays a push
+ *   - push_subscriptions table: one row per device that opted in
+ *   - "send-push" Supabase Edge Function: does the actual sending,
+ *     using the device rows above and a VAPID key pair server-side
+ * ---------------------------------------------------------------- */
+
+// Public half of the VAPID key pair generated for this app. Safe to
+// ship client-side — it's only used to prove to the push service
+// that pushes for this subscription can only be sent by whoever
+// holds the matching private key (kept server-side, in the Edge
+// Function's secrets).
+const VAPID_PUBLIC_KEY = "BEU1AGOpdVuGje1q7I0Qdm-8EeLa7mKq8euQXfm5IKHIuQEx1qCBvG0fqR64WkgdwVJqXn2m_g1dFBO53WL3QAY";
+
+const profileNotificationsBtn = document.getElementById("profile-notifications-btn");
+const profileNotificationsStatusEl = document.getElementById("profile-notifications-status");
+
+function showProfileNotificationsStatus(message, isError) {
+  profileNotificationsStatusEl.hidden = false;
+  profileNotificationsStatusEl.textContent = message;
+  profileNotificationsStatusEl.classList.toggle("field-hint-error", Boolean(isError));
+}
+
+function clearProfileNotificationsStatus() {
+  profileNotificationsStatusEl.hidden = true;
+  profileNotificationsStatusEl.classList.remove("field-hint-error");
+}
+
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window;
+}
+
+// PushManager wants the VAPID key as a raw Uint8Array, not the
+// base64url string it's stored/shipped as.
+function urlBase64ToUint8Array(base64url) {
+  const padding = "=".repeat((4 - (base64url.length % 4)) % 4);
+  const base64 = (base64url + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+function updateProfileNotificationsBtn() {
+  if (!profileNotificationsBtn) return;
+  if (!pushSupported()) {
+    profileNotificationsBtn.textContent = "Not supported on this browser";
+    profileNotificationsBtn.disabled = true;
+    return;
+  }
+  const enabled = Notification.permission === "granted";
+  profileNotificationsBtn.textContent = enabled ? "Notifications on ✓" : "Enable notifications";
+  profileNotificationsBtn.disabled = false;
+}
+
+async function enablePushNotifications() {
+  if (!currentUser || !pushSupported()) return;
+  showProfileNotificationsStatus("Enabling…", false);
+  try {
+    const registration = await navigator.serviceWorker.register("sw.js");
+
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      showProfileNotificationsStatus("Notifications are blocked — enable them in your browser settings.", true);
+      updateProfileNotificationsBtn();
+      return;
+    }
+
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+
+    const json = subscription.toJSON();
+    const { error } = await supabaseClient.from("push_subscriptions").upsert(
+      {
+        user_id: currentUser.id,
+        endpoint: json.endpoint,
+        p256dh: json.keys.p256dh,
+        auth: json.keys.auth,
+      },
+      { onConflict: "endpoint" }
+    );
+    if (error) throw error;
+
+    showProfileNotificationsStatus("Notifications enabled on this device.", false);
+    updateProfileNotificationsBtn();
+  } catch (err) {
+    console.error("Failed to enable push notifications:", err);
+    showProfileNotificationsStatus("Couldn't enable notifications — try again.", true);
+    updateProfileNotificationsBtn();
+  }
+}
+
+if (profileNotificationsBtn) {
+  profileNotificationsBtn.addEventListener("click", () => {
+    if (Notification.permission === "granted") {
+      showProfileNotificationsStatus("Already on for this device — to turn off, use your browser's site settings.", false);
+      return;
+    }
+    enablePushNotifications();
+  });
+  updateProfileNotificationsBtn();
+}
+
+// Calls the send-push Edge Function and returns its parsed
+// { total, sent, removed, failed } result. Throws on failure —
+// notifyOtherUsers below swallows it so a failed/absent push never
+// blocks the beer save that triggered it.
+async function callSendPush(title, body, url) {
+  const {
+    data: { session },
+  } = await supabaseClient.auth.getSession();
+  if (!session) throw new Error("Not signed in");
+
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify({ title, body, url }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
+  return result;
+}
+
+// Fire-and-forget: asks the send-push Edge Function to push a
+// notification to every OTHER user's enabled devices. Never blocks
+// or throws into the caller — a failed/absent push should never get
+// in the way of the beer save that triggered it.
+async function notifyOtherUsers(title, body, url) {
+  try {
+    await callSendPush(title, body, url);
+  } catch (err) {
+    console.error("Failed to notify other users:", err);
+  }
+}
+
 async function saveProfileField(patch) {
-  if (!currentUser) return;
+  if (!currentUser) return false;
   profileStatusEl.hidden = false;
   profileStatusEl.classList.remove("field-hint-error");
   profileStatusEl.textContent = "Saving…";
@@ -2851,17 +3012,27 @@ async function saveProfileField(patch) {
     setTimeout(() => {
       profileStatusEl.hidden = true;
     }, 1200);
+    return true;
   } catch (err) {
     console.error("Failed to save profile:", err);
     profileStatusEl.classList.add("field-hint-error");
-    profileStatusEl.textContent = "Couldn't save — try again.";
+    // Postgres unique_violation (23505) — hits profiles_username_unique_ci
+    // when the requested username is already taken by someone else.
+    profileStatusEl.textContent =
+      err && err.code === "23505" ? "That name is already taken." : "Couldn't save — try again.";
+    return false;
   }
 }
 
 async function saveUsername() {
   const value = profileUsernameInput.value.trim();
   if (!currentProfile || value === (currentProfile.username || "")) return;
-  await saveProfileField({ username: value || "Beer Explorer" });
+  const ok = await saveProfileField({ username: value || "Beer Explorer" });
+  if (!ok) {
+    // Revert the field so it doesn't keep showing a name that wasn't
+    // actually saved (e.g. one another user already has).
+    profileUsernameInput.value = currentProfile.username || "";
+  }
 }
 
 profileUsernameInput.addEventListener("blur", saveUsername);
@@ -2871,6 +3042,114 @@ profileUsernameInput.addEventListener("keydown", (e) => {
     profileUsernameInput.blur();
   }
 });
+
+/* ---------------------------------------------------------------- *
+ *  Account recovery: every user starts as an anonymous Supabase
+ *  user (see initSupabaseUser), which is tied to this one browser —
+ *  clearing site data or opening the app on another phone creates a
+ *  brand new anonymous user with none of the old profile. Linking an
+ *  email upgrades the current anonymous user to a permanent one, and
+ *  that same email can later be used to sign back into it from any
+ *  device (see the Supabase "Anonymous Sign-Ins" docs). No password
+ *  involved — Supabase emails a magic link/code that finishes the
+ *  linking or the sign-in when opened.
+ * ---------------------------------------------------------------- */
+
+function showRecoveryStatus(text, isError) {
+  profileRecoveryStatusEl.hidden = false;
+  profileRecoveryStatusEl.classList.toggle("field-hint-error", Boolean(isError));
+  profileRecoveryStatusEl.textContent = text;
+}
+
+// window.location.origin alone (e.g. "https://andreasboulanger-dev.github.io")
+// drops the GitHub Pages project subpath ("/WeMillion/") the app actually
+// lives at. Supabase's redirect allow-list matches the full URL, so the
+// emailed link has to point at exactly the path the app was loaded from.
+function recoveryRedirectUrl() {
+  return window.location.origin + window.location.pathname;
+}
+
+// Toggles the card between "no email linked yet" (show the form) and
+// "linked" (just confirm the address — nothing left to do here).
+function renderProfileRecovery() {
+  const linkedEmail = currentUser && currentUser.email;
+  if (linkedEmail) {
+    profileRecoveryLabelEl.textContent = "Name saved";
+    profileRecoveryEmailInput.parentElement.hidden = true;
+    profileRecoverySigninBtn.hidden = true;
+    showRecoveryStatus(`This name will follow you on any device you sign in with ${linkedEmail}.`, false);
+  } else {
+    profileRecoveryLabelEl.textContent = "Keep your name on other devices";
+    profileRecoveryEmailInput.parentElement.hidden = false;
+    profileRecoverySigninBtn.hidden = false;
+    profileRecoveryStatusEl.hidden = true;
+  }
+}
+
+function readRecoveryEmail() {
+  const value = profileRecoveryEmailInput.value.trim();
+  if (!value) {
+    showRecoveryStatus("Enter an email first.", true);
+    return null;
+  }
+  return value;
+}
+
+// Upgrades the current (anonymous) user by attaching an email to it.
+// Supabase sends a confirmation email; the name/profile only actually
+// becomes recoverable once that link is opened.
+async function saveRecoveryEmail() {
+  const email = readRecoveryEmail();
+  if (!email) return;
+  profileRecoverySaveBtn.disabled = true;
+  showRecoveryStatus("Sending confirmation email…", false);
+  try {
+    const { error } = await supabaseClient.auth.updateUser(
+      { email },
+      { emailRedirectTo: recoveryRedirectUrl() }
+    );
+    if (error) throw error;
+    showRecoveryStatus("Check your email and tap the link to finish saving your name.", false);
+  } catch (err) {
+    console.error("Failed to link recovery email:", err);
+    const alreadyTaken = /already/i.test(err && err.message ? err.message : "");
+    showRecoveryStatus(
+      alreadyTaken
+        ? "That email is already linked to an account — try \u201cSign in instead\u201d below."
+        : "Couldn't send that — try again.",
+      true
+    );
+  } finally {
+    profileRecoverySaveBtn.disabled = false;
+  }
+}
+
+// For a fresh/anonymous session on a new device: signs back into an
+// account that already has this email linked, via a one-tap emailed
+// link — no password needed. Opening that link on this device swaps
+// in the original account's session (and its username/profile).
+async function signInWithRecoveryEmail() {
+  const email = readRecoveryEmail();
+  if (!email) return;
+  profileRecoverySigninBtn.disabled = true;
+  showRecoveryStatus("Sending sign-in link…", false);
+  try {
+    const { error } = await supabaseClient.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: recoveryRedirectUrl(), shouldCreateUser: false },
+    });
+    if (error) throw error;
+    showRecoveryStatus("Check your email and tap the link to sign in on this device.", false);
+  } catch (err) {
+    console.error("Failed to send recovery sign-in link:", err);
+    showRecoveryStatus("Couldn't send that — try again.", true);
+  } finally {
+    profileRecoverySigninBtn.disabled = false;
+  }
+}
+
+profileRecoverySaveBtn.addEventListener("click", saveRecoveryEmail);
+profileRecoverySigninBtn.addEventListener("click", signInWithRecoveryEmail);
 
 /* ---------------------------------------------------------------- *
  *  Profile mini map: a small, always-dark world map showing every

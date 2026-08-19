@@ -909,6 +909,29 @@ html, body {
   outline-offset: 1px;
 }
 
+/* Account-recovery card: same input treatment as the league code
+   input above, but for a normal-case email address (no uppercase
+   transform). */
+#profile-recovery-email-input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font: 600 15px/1.3 "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+#profile-recovery-email-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+#profile-recovery-email-input:focus-visible {
+  outline: 2px solid #ffdb7a;
+  outline-offset: 1px;
+}
+
 .profile-league-btn {
   flex-shrink: 0;
   padding: 12px 18px;

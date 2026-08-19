@@ -312,6 +312,27 @@
       </div>
     </div>
 
+    <div id="profile-recovery-card" class="field-group">
+      <span class="field-label" id="profile-recovery-label">Keep your name on other devices</span>
+      <p class="field-hint">
+        Add your email so this name and your beers follow you if you switch phones.
+      </p>
+      <div class="profile-league-row">
+        <input
+          id="profile-recovery-email-input"
+          type="email"
+          autocomplete="email"
+          inputmode="email"
+          placeholder="you@example.com"
+        />
+        <button type="button" id="profile-recovery-save-btn" class="profile-league-btn">Save</button>
+      </div>
+      <button type="button" id="profile-recovery-signin-btn" class="profile-league-btn profile-league-btn-secondary">
+        Already saved an email? Sign in on this device
+      </button>
+      <p id="profile-recovery-status" class="field-hint" hidden></p>
+    </div>
+
     <div id="profile-stats">
       <div class="profile-stat" id="profile-stat-beers" role="button" tabindex="0" aria-expanded="false">
         <span id="profile-stat-count" class="profile-stat-value">–</span>
@@ -390,6 +411,15 @@
       </div>
 
       <p id="profile-league-status" class="field-hint" hidden></p>
+    </div>
+
+    <div id="profile-notifications-card" class="field-group">
+      <span class="field-label" id="profile-notifications-label">Notifications</span>
+      <p class="field-hint">Get a push when someone else logs a beer — even with the app closed.</p>
+      <button type="button" id="profile-notifications-btn" class="profile-league-btn profile-league-btn-secondary">
+        Enable notifications
+      </button>
+      <p id="profile-notifications-status" class="field-hint" hidden></p>
     </div>
 
     <p id="profile-favorite" class="field-hint" hidden></p>
